@@ -31,8 +31,11 @@ export const configureOnCallPlugin = async (page: Page): Promise<void> => {
     await clickButton({ page, buttonText: 'Connect' });
   }
 
-  // wait for the "Connected to OnCall" message to know that everything is properly configured
-  await expect(page.getByTestId('status-message-block')).toHaveText(/Connected to OnCall.*/);
+  /**
+   * wait for the "Connected to OnCall" message to know that everything is properly configured
+   * lets wait for up to 25 seconds, because sometimes it can take the plugin configuration sync a bit of time..
+   */
+  await expect(page.getByTestId('status-message-block')).toHaveText(/Connected to OnCall.*/, { timeout: 25000 });
 };
 
 /**

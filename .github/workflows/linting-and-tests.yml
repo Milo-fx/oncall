@@ -405,8 +405,7 @@ jobs:
           GRAFANA_PASSWORD: oncall
           MAILSLURP_API_KEY: ${{ secrets.MAILSLURP_API_KEY }}
         working-directory: ./grafana-plugin
-        # -x = exit command after first failing test
-        run: yarn test:integration -x
+        run: yarn test:integration
 
       # always spit out the engine and celery logs, AFTER the e2e tests have completed
       # can be helpful for debugging failing/flaky tests

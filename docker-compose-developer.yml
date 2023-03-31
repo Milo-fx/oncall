@@ -282,6 +282,7 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: oncall
       GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: grafana-oncall-app
       GF_FEATURE_TOGGLES_ENABLE: topnav
+      GF_AUTH_TOKEN_ROTATION_INTERVAL_MINUTES: 10000 # roughly 7 days
     env_file:
       - ./dev/.env.${DB}.dev
     ports:
