@@ -54,7 +54,13 @@ class ApiTokenAuthentication(BaseAuthentication):
         return auth_token.user, auth_token
 
 
-class PluginAuthentication(BaseAuthentication):
+class BasePluginAuthentication(BaseAuthentication):
+    """
+    Authentication used by grafana-plugin app where we tolerate user not being set yet due to being in
+    a state of initialization, Only validates that the plugin should be talking to the backend. Outside of
+    this app PluginAuthentication should be used since it also checks the user.
+    """
+
     def authenticate_header(self, request):
         # Check parent's method comments
         return "Bearer"
@@ -72,7 +78,14 @@ class PluginAuthentication(BaseAuthentication):
         if not context_string:
             raise exceptions.AuthenticationFailed("No instance context provided.")
 
-        context = json.loads(context_string)
+        try:
+            context = dict(json.loads(context_string))
+        except (ValueError, TypeError):
+            raise exceptions.AuthenticationFailed("Instance context must be JSON dict.")
+
+        if "stack_id" not in context or "org_id" not in context:
+            raise exceptions.AuthenticationFailed("Invalid instance context.")
+
         try:
             auth_token = check_token(token_string, context=context)
             if not auth_token.organization:
@@ -85,24 +98,46 @@ class PluginAuthentication(BaseAuthentication):
 
     @staticmethod
     def _get_user(request: Request, organization: Organization) -> User:
-        context = json.loads(request.headers.get("X-Grafana-Context"))
+        try:
+            context = dict(json.loads(request.headers.get("X-Grafana-Context")))
+        except (ValueError, TypeError):
+            return None
+
+        if "UserId" not in context and "UserID" not in context:
+            return None
+
         try:
             user_id = context["UserId"]
         except KeyError:
             user_id = context["UserID"]
+
+        try:
+            return organization.users.get(user_id=user_id)
+        except User.DoesNotExist:
+            return None
+
+
+class PluginAuthentication(BasePluginAuthentication):
+    @staticmethod
+    def _get_user(request: Request, organization: Organization) -> User:
+        try:
+            context = dict(json.loads(request.headers.get("X-Grafana-Context")))
+        except (ValueError, TypeError):
+            raise exceptions.AuthenticationFailed("Grafana context must be JSON dict.")
+
+        if "UserId" not in context and "UserID" not in context:
+            raise exceptions.AuthenticationFailed("Invalid Grafana context.")
+
+        try:
+            user_id = context["UserId"]
+        except KeyError:
+            user_id = context["UserID"]
+
         try:
             return organization.users.get(user_id=user_id)
         except User.DoesNotExist:
             logger.debug(f"Could not get user from grafana request. Context {context}")
             raise exceptions.AuthenticationFailed("Non-existent or anonymous user.")
-
-    @classmethod
-    def is_user_from_request_present_in_organization(cls, request: Request, organization: Organization) -> User:
-        try:
-            cls._get_user(request, organization)
-            return True
-        except exceptions.AuthenticationFailed:
-            return False
 
 
 class GrafanaIncidentUser(AnonymousUser):

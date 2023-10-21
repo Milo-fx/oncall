@@ -25,12 +25,13 @@
 }
 
 .content {
-  margin-top: 24px;
+  margin-top: 5px;
   display: flex;
 }
 
 .message {
   margin-top: 16px;
+  word-wrap: break-word;
 }
 
 .message a {
@@ -106,7 +107,7 @@
 }
 
 .blue {
-  background: var(--timeline-icon-background-resolution-note);
+  background: var(--tag-border-primary);
 }
 
 .timeline-title {
@@ -194,4 +195,8 @@
       display: inline-flex;
     }
   }
+}
+
+.user-badge {
+  vertical-align: middle;
 }

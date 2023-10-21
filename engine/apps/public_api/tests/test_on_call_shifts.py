@@ -1,4 +1,4 @@
-import datetime
+from unittest.mock import patch
 
 import pytest
 from django.urls import reverse
@@ -13,7 +13,7 @@ invalid_field_data_1 = {
 }
 
 invalid_field_data_2 = {
-    "start": datetime.datetime.now(),
+    "start": timezone.now(),
 }
 
 invalid_field_data_3 = {
@@ -51,11 +51,48 @@ invalid_field_data_10 = {
 
 
 @pytest.mark.django_db
+def test_filter_on_call_shift_schedule(make_organization_and_user_with_token, make_on_call_shift, make_schedule):
+    organization, user, token = make_organization_and_user_with_token()
+    client = APIClient()
+
+    schedule_1 = make_schedule(organization, schedule_class=OnCallScheduleWeb)
+    schedule_2 = make_schedule(organization, schedule_class=OnCallScheduleWeb)
+    start_date = timezone.now().replace(microsecond=0)
+    shifts = []
+    for schedule in (schedule_1, schedule_2):
+        data = {
+            "start": start_date,
+            "rotation_start": start_date,
+            "duration": timezone.timedelta(seconds=7200),
+            "schedule": schedule,
+        }
+        on_call_shift = make_on_call_shift(
+            organization=organization, shift_type=CustomOnCallShift.TYPE_SINGLE_EVENT, **data
+        )
+        on_call_shift.users.add(user)
+        shifts.append(on_call_shift)
+
+    url = reverse("api-public:on_call_shifts-list")
+    response = client.get(url, format="json", HTTP_AUTHORIZATION=f"{token}")
+    assert response.status_code == status.HTTP_200_OK
+    expected = sorted([s.public_primary_key for s in shifts])
+    returned = sorted([s["id"] for s in response.json()["results"]])
+    assert returned == expected
+
+    url += f"?schedule_id={schedule_1.public_primary_key}"
+    response = client.get(url, format="json", HTTP_AUTHORIZATION=f"{token}")
+    assert response.status_code == status.HTTP_200_OK
+    expected = [shifts[0].public_primary_key]
+    returned = [s["id"] for s in response.json()["results"]]
+    assert returned == expected
+
+
+@pytest.mark.django_db
 def test_get_on_call_shift(make_organization_and_user_with_token, make_on_call_shift, make_schedule):
     organization, user, token = make_organization_and_user_with_token()
     client = APIClient()
 
-    start_date = timezone.datetime.now().replace(microsecond=0)
+    start_date = timezone.now().replace(microsecond=0)
     data = {
         "start": start_date,
         "rotation_start": start_date,
@@ -75,6 +112,7 @@ def test_get_on_call_shift(make_organization_and_user_with_token, make_on_call_s
     result = {
         "id": on_call_shift.public_primary_key,
         "team_id": None,
+        "schedule": schedule.public_primary_key,
         "name": on_call_shift.name,
         "type": "single_event",
         "time_zone": None,
@@ -96,11 +134,11 @@ def test_get_override_on_call_shift(make_organization_and_user_with_token, make_
 
     schedule = make_schedule(organization, schedule_class=OnCallScheduleWeb)
 
-    start_date = timezone.datetime.now().replace(microsecond=0)
+    start_date = timezone.now().replace(microsecond=0)
     data = {
         "start": start_date,
         "rotation_start": start_date,
-        "duration": datetime.timedelta(seconds=7200),
+        "duration": timezone.timedelta(seconds=7200),
         "schedule": schedule,
     }
     on_call_shift = make_on_call_shift(organization=organization, shift_type=CustomOnCallShift.TYPE_OVERRIDE, **data)
@@ -113,6 +151,7 @@ def test_get_override_on_call_shift(make_organization_and_user_with_token, make_
     result = {
         "id": on_call_shift.public_primary_key,
         "team_id": None,
+        "schedule": schedule.public_primary_key,
         "name": on_call_shift.name,
         "type": "override",
         "time_zone": None,
@@ -133,8 +172,8 @@ def test_create_on_call_shift(make_organization_and_user_with_token):
 
     url = reverse("api-public:on_call_shifts-list")
 
-    start = datetime.datetime.now()
-    until = start + datetime.timedelta(days=30)
+    start = timezone.now()
+    until = start + timezone.timedelta(days=30)
     data = {
         "team_id": None,
         "name": "test name",
@@ -157,6 +196,7 @@ def test_create_on_call_shift(make_organization_and_user_with_token):
     result = {
         "id": on_call_shift.public_primary_key,
         "team_id": None,
+        "schedule": None,
         "name": data["name"],
         "type": "recurrent_event",
         "time_zone": None,
@@ -185,8 +225,8 @@ def test_create_on_call_shift_using_default_interval(make_organization_and_user_
 
     url = reverse("api-public:on_call_shifts-list")
 
-    start = datetime.datetime.now()
-    until = start + datetime.timedelta(days=30)
+    start = timezone.now()
+    until = start + timezone.timedelta(days=30)
     data = {
         "team_id": None,
         "name": "test name",
@@ -208,6 +248,7 @@ def test_create_on_call_shift_using_default_interval(make_organization_and_user_
     expected = {
         "id": on_call_shift.public_primary_key,
         "team_id": None,
+        "schedule": None,
         "name": data["name"],
         "type": "recurrent_event",
         "time_zone": None,
@@ -236,8 +277,8 @@ def test_create_on_call_shift_using_none_interval_fails(make_organization_and_us
 
     url = reverse("api-public:on_call_shifts-list")
 
-    start = datetime.datetime.now()
-    until = start + datetime.timedelta(days=30)
+    start = timezone.now()
+    until = start + timezone.timedelta(days=30)
     data = {
         "team_id": None,
         "name": "test name",
@@ -267,7 +308,7 @@ def test_create_override_on_call_shift(make_organization_and_user_with_token):
 
     url = reverse("api-public:on_call_shifts-list")
 
-    start = datetime.datetime.now()
+    start = timezone.now()
     data = {
         "team_id": None,
         "name": "test name",
@@ -284,6 +325,7 @@ def test_create_override_on_call_shift(make_organization_and_user_with_token):
     result = {
         "id": on_call_shift.public_primary_key,
         "team_id": None,
+        "schedule": None,
         "name": data["name"],
         "type": "override",
         "time_zone": None,
@@ -304,8 +346,8 @@ def test_create_on_call_shift_invalid_time_zone(make_organization_and_user_with_
 
     url = reverse("api-public:on_call_shifts-list")
 
-    start = datetime.datetime.now()
-    until = start + datetime.timedelta(days=30)
+    start = timezone.now()
+    until = start + timezone.timedelta(days=30)
     data = {
         "team_id": None,
         "name": "test name",
@@ -334,11 +376,11 @@ def test_update_on_call_shift(make_organization_and_user_with_token, make_on_cal
     organization, user, token = make_organization_and_user_with_token()
     client = APIClient()
 
-    start_date = timezone.datetime.now().replace(microsecond=0)
+    start_date = timezone.now().replace(microsecond=0)
     data = {
         "start": start_date,
         "rotation_start": start_date,
-        "duration": datetime.timedelta(seconds=7200),
+        "duration": timezone.timedelta(seconds=7200),
         "frequency": CustomOnCallShift.FREQUENCY_WEEKLY,
         "interval": 2,
         "by_day": ["MO", "FR"],
@@ -362,11 +404,13 @@ def test_update_on_call_shift(make_organization_and_user_with_token, make_on_cal
     assert on_call_shift.by_day != data_to_update["by_day"]
     assert len(on_call_shift.users.filter(public_primary_key=user.public_primary_key)) == 0
 
-    response = client.put(url, data=data_to_update, format="json", HTTP_AUTHORIZATION=f"{token}")
+    with patch("apps.schedules.models.CustomOnCallShift.start_drop_ical_and_check_schedule_tasks") as mock_drop_ical:
+        response = client.put(url, data=data_to_update, format="json", HTTP_AUTHORIZATION=f"{token}")
 
     result = {
         "id": on_call_shift.public_primary_key,
         "team_id": None,
+        "schedule": schedule.public_primary_key,
         "name": on_call_shift.name,
         "type": "recurrent_event",
         "time_zone": None,
@@ -391,6 +435,69 @@ def test_update_on_call_shift(make_organization_and_user_with_token, make_on_cal
     assert on_call_shift.by_day == data_to_update["by_day"]
     assert len(on_call_shift.users.filter(public_primary_key=user.public_primary_key)) == 1
     assert response.data == result
+    mock_drop_ical.assert_called_once_with(schedule)
+
+
+@pytest.mark.django_db
+def test_update_on_call_shift_web_schedule(make_organization_and_user_with_token, make_on_call_shift, make_schedule):
+    organization, user, token = make_organization_and_user_with_token()
+    client = APIClient()
+
+    start_date = timezone.now().replace(microsecond=0)
+    schedule = make_schedule(organization, schedule_class=OnCallScheduleWeb)
+    data = {
+        "start": start_date,
+        "rotation_start": start_date,
+        "duration": timezone.timedelta(seconds=7200),
+        "frequency": CustomOnCallShift.FREQUENCY_WEEKLY,
+        "interval": 2,
+        "by_day": ["MO", "FR"],
+        "schedule": schedule,
+    }
+    on_call_shift = make_on_call_shift(
+        organization=organization, shift_type=CustomOnCallShift.TYPE_ROLLING_USERS_EVENT, **data
+    )
+    on_call_shift.add_rolling_users([[user]])
+
+    url = reverse("api-public:on_call_shifts-detail", kwargs={"pk": on_call_shift.public_primary_key})
+    data_to_update = {
+        "duration": 14400,
+        "by_day": ["MO", "WE", "FR"],
+    }
+    assert int(on_call_shift.duration.total_seconds()) != data_to_update["duration"]
+    assert on_call_shift.by_day != data_to_update["by_day"]
+
+    with patch("apps.schedules.models.CustomOnCallShift.start_drop_ical_and_check_schedule_tasks") as mock_drop_ical:
+        response = client.put(url, data=data_to_update, format="json", HTTP_AUTHORIZATION=f"{token}")
+
+    result = {
+        "id": on_call_shift.public_primary_key,
+        "team_id": None,
+        "schedule": schedule.public_primary_key,
+        "name": on_call_shift.name,
+        "type": "rolling_users",
+        "time_zone": None,
+        "level": 0,
+        "start": on_call_shift.start.strftime("%Y-%m-%dT%H:%M:%S"),
+        "rotation_start": on_call_shift.rotation_start.strftime("%Y-%m-%dT%H:%M:%S"),
+        "duration": data_to_update["duration"],
+        "frequency": "weekly",
+        "interval": on_call_shift.interval,
+        "until": None,
+        "week_start": "SU",
+        "by_day": data_to_update["by_day"],
+        "rolling_users": [[user.public_primary_key]],
+        "start_rotation_from_user_index": None,
+        "by_month": None,
+        "by_monthday": None,
+    }
+
+    assert response.status_code == status.HTTP_200_OK
+    on_call_shift.refresh_from_db()
+    assert int(on_call_shift.duration.total_seconds()) == data_to_update["duration"]
+    assert on_call_shift.by_day == data_to_update["by_day"]
+    assert response.data == result
+    mock_drop_ical.assert_called_once_with(schedule)
 
 
 @pytest.mark.django_db
@@ -413,11 +520,11 @@ def test_update_on_call_shift_invalid_field(make_organization_and_user_with_toke
     organization, _, token = make_organization_and_user_with_token()
     client = APIClient()
 
-    start_date = timezone.datetime.now().replace(microsecond=0)
+    start_date = timezone.now().replace(microsecond=0)
     data = {
         "start": start_date,
         "rotation_start": start_date,
-        "duration": datetime.timedelta(seconds=7200),
+        "duration": timezone.timedelta(seconds=7200),
         "frequency": CustomOnCallShift.FREQUENCY_WEEKLY,
         "interval": 2,
         "by_day": ["MO", "FR"],
@@ -439,11 +546,11 @@ def test_delete_on_call_shift(make_organization_and_user_with_token, make_on_cal
     organization, _, token = make_organization_and_user_with_token()
     client = APIClient()
 
-    start_date = timezone.datetime.now().replace(microsecond=0)
+    start_date = timezone.now().replace(microsecond=0)
     data = {
         "start": start_date,
         "rotation_start": start_date,
-        "duration": datetime.timedelta(seconds=7200),
+        "duration": timezone.timedelta(seconds=7200),
     }
     on_call_shift = make_on_call_shift(
         organization=organization, shift_type=CustomOnCallShift.TYPE_SINGLE_EVENT, **data
@@ -466,13 +573,14 @@ def test_create_web_override(make_organization_and_user_with_token, make_on_call
 
     url = reverse("api-public:on_call_shifts-list")
 
-    start = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+    start = timezone.now().replace(microsecond=0)
+    start_str = start.strftime("%Y-%m-%dT%H:%M:%S")
     data = {
         "team_id": None,
         "name": "test web override",
         "type": "override",
         "source": 0,
-        "start": start.strftime("%Y-%m-%dT%H:%M:%S"),
+        "start": start_str,
         "duration": 3600,
         "users": [user.public_primary_key],
         "time_zone": "UTC",
@@ -483,10 +591,11 @@ def test_create_web_override(make_organization_and_user_with_token, make_on_call
     expected_response = {
         "id": shift.public_primary_key,
         "team_id": None,
+        "schedule": None,
         "name": "test web override",
         "type": "override",
-        "start": start.strftime("%Y-%m-%dT%H:%M:%S"),
-        "rotation_start": start.strftime("%Y-%m-%dT%H:%M:%S"),
+        "start": start_str,
+        "rotation_start": start_str,
         "duration": 3600,
         "users": [user.public_primary_key],
         "time_zone": "UTC",

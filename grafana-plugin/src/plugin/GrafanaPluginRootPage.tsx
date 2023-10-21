@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 
+import { LoadingPlaceholder } from '@grafana/ui';
 import classnames from 'classnames';
 import dayjs from 'dayjs';
 import customParseFormat from 'dayjs/plugin/customParseFormat';
@@ -24,13 +25,9 @@ import NoMatch from 'pages/NoMatch';
 import EscalationChains from 'pages/escalation-chains/EscalationChains';
 import Incident from 'pages/incident/Incident';
 import Incidents from 'pages/incidents/Incidents';
-import Integration2 from 'pages/integration_2/Integration2';
+import Integration from 'pages/integration/Integration';
 import Integrations from 'pages/integrations/Integrations';
-import Integrations2 from 'pages/integrations_2/Integrations2';
-import Maintenance from 'pages/maintenance/Maintenance';
-import OrganizationLogPage from 'pages/organization-logs/OrganizationLog';
 import OutgoingWebhooks from 'pages/outgoing_webhooks/OutgoingWebhooks';
-import OutgoingWebhooks2 from 'pages/outgoing_webhooks_2/OutgoingWebhooks2';
 import Schedule from 'pages/schedule/Schedule';
 import Schedules from 'pages/schedules/Schedules';
 import SettingsPage from 'pages/settings/SettingsPage';
@@ -38,11 +35,10 @@ import ChatOps from 'pages/settings/tabs/ChatOps/ChatOps';
 import CloudPage from 'pages/settings/tabs/Cloud/CloudPage';
 import LiveSettings from 'pages/settings/tabs/LiveSettings/LiveSettingsPage';
 import Users from 'pages/users/Users';
-import 'interceptors';
 import { rootStore } from 'state';
 import { useStore } from 'state/useStore';
 import { isUserActionAllowed } from 'utils/authorization';
-import loadJs from 'utils/loadJs';
+import { DEFAULT_PAGE } from 'utils/consts';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -54,15 +50,14 @@ dayjs.extend(isoWeek);
 dayjs.extend(isBetween);
 dayjs.extend(customParseFormat);
 
-import 'style/vars.css';
-import 'style/global.css';
-import 'style/utils.css';
-import 'style/responsive.css';
+import 'assets/style/vars.css';
+import 'assets/style/global.css';
+import 'assets/style/utils.css';
 
 import { getQueryParams, isTopNavbar } from './GrafanaPluginRootPage.helpers';
 import PluginSetup from './PluginSetup';
 
-import grafanaGlobalStyle from '!raw-loader!img/grafanaGlobalStyles.css';
+import grafanaGlobalStyle from '!raw-loader!assets/style/grafanaGlobalStyles.css';
 
 export const GrafanaPluginRootPage = (props: AppRootProps) => {
   return (
@@ -73,13 +68,17 @@ export const GrafanaPluginRootPage = (props: AppRootProps) => {
 };
 
 export const Root = observer((props: AppRootProps) => {
-  const [didFinishLoading, setDidFinishLoading] = useState(false);
-
   const store = useStore();
 
+  const [basicDataLoaded, setBasicDataLoaded] = useState(false);
+
+  const [pageTitle, setPageTitle] = useState('');
+
   useEffect(() => {
-    updateBasicData();
+    runQueuedUpdateData(0);
   }, []);
+
+  const location = useLocation();
 
   useEffect(() => {
     let link = document.createElement('link');
@@ -101,31 +100,17 @@ export const Root = observer((props: AppRootProps) => {
     };
   }, []);
 
-  useEffect(() => {
-    loadJs(`https://www.google.com/recaptcha/api.js?render=${rootStore.recaptchaSiteKey}`);
-  }, []);
-
-  const updateBasicData = async () => {
-    await store.updateBasicData();
-    await store.alertGroupStore.fetchIRMPlan();
-    setDidFinishLoading(true);
-  };
-
-  if (!didFinishLoading) {
-    return null;
-  }
-
-  const location = useLocation();
-
   const page = getMatchedPage(location.pathname);
-
   const pagePermissionAction = pages[page]?.action;
   const userHasAccess = pagePermissionAction ? isUserActionAllowed(pagePermissionAction) : true;
-
   const query = getQueryParams();
 
+  const getPageNav = () => {
+    return (pages[page] || pages[DEFAULT_PAGE]).getPageNav(pageTitle);
+  };
+
   return (
-    <DefaultPageLayout {...props} page={page}>
+    <DefaultPageLayout {...props} page={page} pageNav={getPageNav()}>
       {!isTopNavbar() && (
         <>
           <Header />
@@ -140,93 +125,99 @@ export const Root = observer((props: AppRootProps) => {
         })}
       >
         {userHasAccess ? (
-          <Switch>
-            <Route path={getRoutesForPage('alert-groups')} exact>
-              <Incidents query={query} />
-            </Route>
-            <Route path={getRoutesForPage('alert-group')} exact>
-              <Incident query={query} />
-            </Route>
-            <Route path={getRoutesForPage('users')} exact>
-              <Users query={query} />
-            </Route>
-            <Route path={getRoutesForPage('integrations')} exact>
-              <Integrations query={query} />
-            </Route>
-            <Route path={getRoutesForPage('integrations_2')} exact>
-              <Integrations2 query={query} />
-            </Route>
-            <Route path={getRoutesForPage('integration_2')} exact>
-              <Integration2 query={query} />
-            </Route>
-            <Route path={getRoutesForPage('escalations')} exact>
-              <EscalationChains query={query} />
-            </Route>
-            <Route path={getRoutesForPage('schedules')} exact>
-              <Schedules query={query} />
-            </Route>
-            <Route path={getRoutesForPage('schedule')} exact>
-              <Schedule />
-            </Route>
-            <Route path={getRoutesForPage('outgoing_webhooks')} exact>
-              <OutgoingWebhooks query={query} />
-            </Route>
-            <Route path={getRoutesForPage('outgoing_webhooks_2')} exact>
-              <OutgoingWebhooks2 query={query} />
-            </Route>
-            <Route path={getRoutesForPage('maintenance')} exact>
-              <Maintenance query={query} />
-            </Route>
-            <Route path={getRoutesForPage('settings')} exact>
-              <SettingsPage />
-            </Route>
-            <Route path={getRoutesForPage('organization-logs')} exact>
-              <OrganizationLogPage />
-            </Route>
-            <Route path={getRoutesForPage('chat-ops')} exact>
-              <ChatOps query={query} />
-            </Route>
-            <Route path={getRoutesForPage('live-settings')} exact>
-              <LiveSettings />
-            </Route>
-            <Route path={getRoutesForPage('cloud')} exact>
-              <CloudPage />
-            </Route>
+          // Otherwise we'll run into concurrency issues
+          !basicDataLoaded ? (
+            <LoadingPlaceholder text="Loading..." />
+          ) : (
+            <Switch>
+              <Route path={getRoutesForPage('alert-groups')} exact>
+                <Incidents query={query} />
+              </Route>
+              <Route path={getRoutesForPage('alert-group')} exact>
+                <Incident query={query} pageTitle={pageTitle} setPageTitle={setPageTitle} />
+              </Route>
+              <Route path={getRoutesForPage('users')} exact>
+                <Users query={query} />
+              </Route>
+              <Route path={getRoutesForPage('integrations')} exact>
+                <Integrations query={query} />
+              </Route>
+              <Route path={getRoutesForPage('integration')} exact>
+                <Integration query={query} />
+              </Route>
+              <Route path={getRoutesForPage('escalations')} exact>
+                <EscalationChains query={query} />
+              </Route>
+              <Route path={getRoutesForPage('schedules')} exact>
+                <Schedules query={query} />
+              </Route>
+              <Route path={getRoutesForPage('schedule')} exact>
+                <Schedule query={query} pageTitle={pageTitle} setPageTitle={setPageTitle} />
+              </Route>
+              <Route path={getRoutesForPage('outgoing_webhooks')} exact>
+                <OutgoingWebhooks query={query} />
+              </Route>
+              <Route path={getRoutesForPage('settings')} exact>
+                <SettingsPage />
+              </Route>
+              <Route path={getRoutesForPage('chat-ops')} exact>
+                <ChatOps query={query} />
+              </Route>
+              <Route path={getRoutesForPage('live-settings')} exact>
+                <LiveSettings />
+              </Route>
+              <Route path={getRoutesForPage('cloud')} exact>
+                <CloudPage />
+              </Route>
 
-            {/* Backwards compatibility redirect routes */}
-            <Route
-              path={getRoutesForPage('incident')}
-              exact
-              render={({ location }) => (
-                <Redirect
-                  to={{
-                    ...location,
-                    pathname: location.pathname.replace(/incident/, 'alert-group'),
-                  }}
-                ></Redirect>
-              )}
-            ></Route>
-            <Route
-              path={getRoutesForPage('incidents')}
-              exact
-              render={({ location }) => (
-                <Redirect
-                  to={{
-                    ...location,
-                    pathname: location.pathname.replace(/incidents/, 'alert-groups'),
-                  }}
-                ></Redirect>
-              )}
-            ></Route>
+              {/* Backwards compatibility redirect routes */}
+              <Route
+                path={getRoutesForPage('incident')}
+                exact
+                render={({ location }) => (
+                  <Redirect
+                    to={{
+                      ...location,
+                      pathname: location.pathname.replace(/incident/, 'alert-group'),
+                    }}
+                  ></Redirect>
+                )}
+              ></Route>
+              <Route
+                path={getRoutesForPage('incidents')}
+                exact
+                render={({ location }) => (
+                  <Redirect
+                    to={{
+                      ...location,
+                      pathname: location.pathname.replace(/incidents/, 'alert-groups'),
+                    }}
+                  ></Redirect>
+                )}
+              ></Route>
 
-            <Route path="*">
-              <NoMatch />
-            </Route>
-          </Switch>
+              <Route path="*">
+                <NoMatch />
+              </Route>
+            </Switch>
+          )
         ) : (
           <Unauthorized requiredUserAction={pagePermissionAction} />
         )}
       </div>
     </DefaultPageLayout>
   );
+
+  async function runQueuedUpdateData(attemptCount: number) {
+    if (attemptCount === 10) {
+      return;
+    }
+
+    try {
+      await store.updateBasicData();
+      setBasicDataLoaded(true);
+    } catch {
+      setTimeout(() => runQueuedUpdateData(attemptCount + 1), 1000);
+    }
+  }
 });

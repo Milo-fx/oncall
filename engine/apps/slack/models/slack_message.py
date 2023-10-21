@@ -1,22 +1,29 @@
 import logging
 import time
+import typing
 import uuid
 
-from django.apps import apps
 from django.db import models
 
-from apps.slack.slack_client import SlackClientWithErrorHandling
-from apps.slack.slack_client.exceptions import (
-    SlackAPIChannelArchivedException,
-    SlackAPIException,
-    SlackAPITokenException,
+from apps.slack.client import SlackClient
+from apps.slack.errors import (
+    SlackAPIChannelArchivedError,
+    SlackAPIError,
+    SlackAPIFetchMembersFailedError,
+    SlackAPIMethodNotSupportedForChannelTypeError,
+    SlackAPITokenError,
 )
+
+if typing.TYPE_CHECKING:
+    from apps.alerts.models import AlertGroup
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 
 class SlackMessage(models.Model):
+    alert_group: typing.Optional["AlertGroup"]
+
     id = models.CharField(primary_key=True, default=uuid.uuid4, editable=False, max_length=36)
 
     slack_id = models.CharField(max_length=100)
@@ -72,46 +79,27 @@ class SlackMessage(models.Model):
             self.save()
         return self._slack_team_identity
 
-    def get_alert_group(self):
-        try:
-            return self._alert_group
-        except SlackMessage._alert_group.RelatedObjectDoesNotExist:
-            if self.alert_group:
-                self.alert_group.slack_message = self
-                self.alert_group.save(update_fields=["slack_message"])
-                return self.alert_group
-            return self.alert.group
-
     @property
-    def permalink(self):
-        if self.slack_team_identity is not None and self.cached_permalink is None:
-            sc = SlackClientWithErrorHandling(self.slack_team_identity.bot_access_token)
-            result = None
-            try:
-                result = sc.api_call(
-                    "chat.getPermalink",
-                    channel=self.channel_id,
-                    message_ts=self.slack_id,
-                )
-            except SlackAPIException as e:
-                if e.response["error"] == "message_not_found":
-                    return "https://slack.com/resources/using-slack/page/404"
-                elif e.response["error"] == "channel_not_found":
-                    return "https://slack.com/resources/using-slack/page/404"
-
-            if result is not None and result["permalink"] is not None:
-                # Reconnect to DB in case we use read-only DB here.
-                _self = SlackMessage.objects.get(pk=self.pk)
-                _self.cached_permalink = result["permalink"]
-                _self.save()
-                self.cached_permalink = _self.cached_permalink
-
-        if self.cached_permalink is not None:
+    def permalink(self) -> typing.Optional[str]:
+        if self.cached_permalink or not self.slack_team_identity:
             return self.cached_permalink
 
+        try:
+            result = SlackClient(self.slack_team_identity).chat_getPermalink(
+                channel=self.channel_id, message_ts=self.slack_id
+            )
+        except SlackAPIError:
+            return None
+
+        self.cached_permalink = result["permalink"]
+        self.save(update_fields=["cached_permalink"])
+
+        return self.cached_permalink
+
     def send_slack_notification(self, user, alert_group, notification_policy):
-        UserNotificationPolicyLogRecord = apps.get_model("base", "UserNotificationPolicyLogRecord")
-        slack_message = alert_group.get_slack_message()
+        from apps.base.models import UserNotificationPolicyLogRecord
+
+        slack_message = alert_group.slack_message
         user_verbal = user.get_username_with_slack_verbal(mention=True)
 
         slack_user_identity = user.slack_user_identity
@@ -143,20 +131,18 @@ class SlackMessage(models.Model):
                 },
             }
         ]
-        sc = SlackClientWithErrorHandling(self.slack_team_identity.bot_access_token)
+        sc = SlackClient(self.slack_team_identity)
         channel_id = slack_message.channel_id
 
         try:
-            result = sc.api_call(
-                "chat.postMessage",
+            result = sc.chat_postMessage(
                 channel=channel_id,
                 text=text,
                 blocks=blocks,
                 thread_ts=slack_message.slack_id,
                 unfurl_links=True,
             )
-        except SlackAPITokenException as e:
-            print(e)
+        except SlackAPITokenError:
             UserNotificationPolicyLogRecord(
                 author=user,
                 type=UserNotificationPolicyLogRecord.TYPE_PERSONAL_NOTIFICATION_FAILED,
@@ -168,8 +154,7 @@ class SlackMessage(models.Model):
                 notification_error_code=UserNotificationPolicyLogRecord.ERROR_NOTIFICATION_IN_SLACK_TOKEN_ERROR,
             ).save()
             return
-        except SlackAPIChannelArchivedException as e:
-            print(e)
+        except SlackAPIChannelArchivedError:
             UserNotificationPolicyLogRecord(
                 author=user,
                 type=UserNotificationPolicyLogRecord.TYPE_PERSONAL_NOTIFICATION_FAILED,
@@ -182,67 +167,24 @@ class SlackMessage(models.Model):
             ).save()
             return
         else:
-            SlackMessage(
+            alert_group.slack_messages.create(
                 slack_id=result["ts"],
                 organization=self.organization,
                 _slack_team_identity=self.slack_team_identity,
                 channel_id=channel_id,
-                alert_group=alert_group,
-            ).save()
+            )
 
         # Check if escalated user is in channel. Otherwise send notification and request to invite him.
         try:
             if slack_user_identity:
                 channel_members = []
                 try:
-                    channel_members = sc.api_call("conversations.members", channel=channel_id)["members"]
-                except SlackAPIException as e:
-                    if e.response["error"] == "fetch_members_failed":
-                        logger.warning(
-                            f"Unable to get members from slack conversation: 'fetch_members_failed'. "
-                            f"Slack team identity pk: {self.slack_team_identity.pk}.\n"
-                            f"{e}"
-                        )
-                    else:
-                        raise e
+                    channel_members = sc.conversations_members(channel=channel_id)["members"]
+                except SlackAPIFetchMembersFailedError:
+                    pass
 
                 if slack_user_identity.slack_id not in channel_members:
                     time.sleep(5)  # 2 messages in the same moment are ratelimited by Slack. Dirty hack.
                     slack_user_identity.send_link_to_slack_message(slack_message)
-        except SlackAPITokenException as e:
-            print(e)
-        except SlackAPIException as e:
-            if e.response["error"] == "method_not_supported_for_channel_type":
-                # It's ok, just a private channel. Passing
-                pass
-            else:
-                raise e
-
-    @classmethod
-    def get_alert_group_from_slack_message_payload(cls, slack_team_identity, payload):
-
-        message_ts = payload.get("message_ts") or payload["container"]["message_ts"]  # interactive message or block
-        channel_id = payload["channel"]["id"]
-
-        try:
-            slack_message = cls.objects.get(
-                slack_id=message_ts,
-                _slack_team_identity=slack_team_identity,
-                channel_id=channel_id,
-            )
-            alert_group = slack_message.get_alert_group()
-        except cls.DoesNotExist as e:
-            logger.error(
-                f"Tried to get SlackMessage from message_ts:"
-                f"slack_team_identity_id={slack_team_identity.pk},"
-                f"message_ts={message_ts}"
-            )
-            raise e
-        except cls.alert.RelatedObjectDoesNotExist as e:
-            logger.error(
-                f"Tried to get AlertGroup from SlackMessage:"
-                f"slack_team_identity_id={slack_team_identity.pk},"
-                f"message_ts={message_ts}"
-            )
-            raise e
-        return alert_group
+        except (SlackAPITokenError, SlackAPIMethodNotSupportedForChannelTypeError):
+            pass

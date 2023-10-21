@@ -116,6 +116,7 @@ def test_list_teams_for_non_member(
         (LegacyAccessControlRole.ADMIN, status.HTTP_200_OK),
         (LegacyAccessControlRole.EDITOR, status.HTTP_200_OK),
         (LegacyAccessControlRole.VIEWER, status.HTTP_200_OK),
+        (LegacyAccessControlRole.NONE, status.HTTP_403_FORBIDDEN),
     ],
 )
 def test_list_teams_permissions(
@@ -255,7 +256,7 @@ def test_team_permissions_not_in_team(
         assert response.json() == {"error_code": "wrong_team"}
 
     # Editor cannot retrieve other user information
-    url = reverse(f"api-internal:user-detail", kwargs={"pk": another_user.public_primary_key})
+    url = reverse("api-internal:user-detail", kwargs={"pk": another_user.public_primary_key})
     response = client.get(url, **make_user_auth_headers(user, token))
 
     assert response.status_code == status.HTTP_403_FORBIDDEN

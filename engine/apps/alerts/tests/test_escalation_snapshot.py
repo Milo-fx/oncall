@@ -213,5 +213,108 @@ def test_executed_escalation_policy_snapshots(escalation_snapshot_test_setup):
         escalation_snapshot.escalation_policies_snapshots[0]
     ]
 
-    escalation_snapshot.last_active_escalation_policy_order = len(escalation_snapshot.escalation_policies_snapshots)
+    escalation_snapshot.last_active_escalation_policy_order = len(escalation_snapshot.escalation_policies_snapshots) - 1
     assert escalation_snapshot.executed_escalation_policy_snapshots == escalation_snapshot.escalation_policies_snapshots
+
+
+@pytest.mark.django_db
+def test_escalation_snapshot_non_sequential_orders(
+    make_organization,
+    make_alert_receive_channel,
+    make_escalation_chain,
+    make_channel_filter,
+    make_escalation_policy,
+    make_alert_group,
+):
+    organization = make_organization()
+
+    alert_receive_channel = make_alert_receive_channel(organization)
+
+    escalation_chain = make_escalation_chain(organization)
+    channel_filter = make_channel_filter(
+        alert_receive_channel,
+        escalation_chain=escalation_chain,
+        notification_backends={"BACKEND": {"channel_id": "abc123"}},
+    )
+
+    step_1 = make_escalation_policy(
+        escalation_chain=channel_filter.escalation_chain,
+        escalation_policy_step=EscalationPolicy.STEP_WAIT,
+        order=12,
+    )
+    step_2 = make_escalation_policy(
+        escalation_chain=channel_filter.escalation_chain,
+        escalation_policy_step=EscalationPolicy.STEP_WAIT,
+        order=42,
+    )
+
+    alert_group = make_alert_group(alert_receive_channel, channel_filter=channel_filter)
+    alert_group.raw_escalation_snapshot = alert_group.build_raw_escalation_snapshot()
+    alert_group.save()
+
+    escalation_snapshot = alert_group.escalation_snapshot
+    assert escalation_snapshot.last_active_escalation_policy_order is None
+    assert escalation_snapshot.next_active_escalation_policy_snapshot.id == step_1.id
+
+    escalation_snapshot.execute_actual_escalation_step()
+    assert escalation_snapshot.last_active_escalation_policy_order == 0
+    assert escalation_snapshot.next_active_escalation_policy_snapshot.id == step_2.id
+
+    escalation_snapshot.execute_actual_escalation_step()
+    assert escalation_snapshot.last_active_escalation_policy_order == 1
+    assert escalation_snapshot.next_active_escalation_policy_snapshot is None
+
+    policy_ids = [p.id for p in escalation_snapshot.executed_escalation_policy_snapshots]
+    assert policy_ids == [step_1.id, step_2.id]
+
+
+@pytest.mark.django_db
+def test_serialize_escalation_snapshot_with_deleted_user(
+    make_organization_and_user,
+    make_user_for_organization,
+    make_alert_receive_channel,
+    make_channel_filter,
+    make_escalation_chain,
+    make_escalation_policy,
+    make_alert_group,
+):
+    organization, user = make_organization_and_user()
+    alert_receive_channel = make_alert_receive_channel(organization)
+    escalation_chain = make_escalation_chain(organization)
+    channel_filter = make_channel_filter(
+        alert_receive_channel,
+        escalation_chain=escalation_chain,
+        notification_backends={"BACKEND": {"channel_id": "abc123"}},
+    )
+
+    notify_users_queue = make_escalation_policy(
+        escalation_chain=channel_filter.escalation_chain,
+        escalation_policy_step=EscalationPolicy.STEP_NOTIFY_USERS_QUEUE,
+        last_notified_user=user,
+    )
+    notify_users_queue.notify_to_users_queue.set([user])
+
+    alert_group = make_alert_group(alert_receive_channel, channel_filter=channel_filter)
+    alert_group.raw_escalation_snapshot = alert_group.build_raw_escalation_snapshot()
+    alert_group.save()
+    escalation_snapshot = alert_group.escalation_snapshot
+
+    assert notify_users_queue.last_notified_user == user
+    assert escalation_snapshot.escalation_policies_snapshots[0].last_notified_user == user
+    assert len(escalation_snapshot.escalation_policies_snapshots[0].notify_to_users_queue) == 1
+
+    # delete user
+    user.is_active = None
+    user.save()
+
+    alert_group.raw_escalation_snapshot = alert_group.build_raw_escalation_snapshot()
+    # clear cached_property
+    del alert_group.escalation_snapshot
+    alert_group.save()
+
+    escalation_snapshot = alert_group.escalation_snapshot
+
+    assert notify_users_queue.last_notified_user == user
+    assert escalation_snapshot is not None
+    assert escalation_snapshot.escalation_policies_snapshots[0].last_notified_user is None
+    assert len(escalation_snapshot.escalation_policies_snapshots[0].notify_to_users_queue) == 0

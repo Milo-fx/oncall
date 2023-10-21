@@ -49,23 +49,25 @@ export default class BaseStore {
   }
 
   @action
-  async create(data: any) {
-    return await makeRequest(this.path, {
+  async create<RT = any>(data: any): Promise<RT | void> {
+    return await makeRequest<RT>(this.path, {
       method: 'POST',
       data,
     }).catch(this.onApiError);
   }
 
   @action
-  async update(id: any, data: any, params: any = null) {
-    const result = await makeRequest(`${this.path}${id}/`, {
+  async update<RT = any>(id: any, data: any, params: any = null, skipErrorHandling = false): Promise<RT | void> {
+    const result = await makeRequest<RT>(`${this.path}${id}/`, {
       method: 'PUT',
       data,
       params: params,
-    }).catch(this.onApiError);
+    }).catch((error) => {
+      this.onApiError(error, skipErrorHandling);
+    });
 
     // Update env_status field for current team
-    await this.rootStore.teamStore.loadCurrentTeam();
+    await this.rootStore.organizationStore.loadCurrentOrganization();
     return result;
   }
 
@@ -76,7 +78,7 @@ export default class BaseStore {
     }).catch(this.onApiError);
 
     // Update env_status field for current team
-    await this.rootStore.teamStore.loadCurrentTeam();
+    await this.rootStore.organizationStore.loadCurrentOrganization();
     return result;
   }
 }

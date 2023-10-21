@@ -52,7 +52,7 @@ const PagedUsers = observer((props: PagedUsersProps) => {
   return (
     <div className={cx('paged-users')}>
       <Text.Title type="primary" level={4} className={cx('timeline-title')}>
-        Current responders
+        Additional responders
       </Text.Title>
       <ul className={cx('paged-users-list')}>
         {pagedUsers.map((pagedUser) => {
@@ -62,7 +62,7 @@ const PagedUsers = observer((props: PagedUsersProps) => {
             <li key={pagedUser.pk}>
               <HorizontalGroup justify="space-between">
                 <HorizontalGroup>
-                  <Avatar size="big" src={pagedUser.avatar} />
+                  <Avatar size="medium" src={pagedUser.avatar} />
                   <Text strong>{pagedUser.username}</Text>
                   {Boolean(
                     storeUser &&

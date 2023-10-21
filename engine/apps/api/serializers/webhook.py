@@ -4,6 +4,8 @@ from rest_framework import serializers
 from rest_framework.validators import UniqueTogetherValidator
 
 from apps.webhooks.models import Webhook, WebhookResponse
+from apps.webhooks.models.webhook import PUBLIC_WEBHOOK_HTTP_METHODS, WEBHOOK_FIELD_PLACEHOLDER
+from apps.webhooks.presets.preset_options import WebhookPresetOptions
 from common.api_helpers.custom_fields import TeamPrimaryKeyRelatedField
 from common.api_helpers.utils import CurrentOrganizationDefault, CurrentTeamDefault, CurrentUserDefault
 from common.jinja_templater import apply_jinja_template
@@ -21,6 +23,7 @@ class WebhookResponseSerializer(serializers.ModelSerializer):
             "request_data",
             "status_code",
             "content",
+            "event_data",
         ]
 
 
@@ -29,9 +32,9 @@ class WebhookSerializer(serializers.ModelSerializer):
     organization = serializers.HiddenField(default=CurrentOrganizationDefault())
     team = TeamPrimaryKeyRelatedField(allow_null=True, default=CurrentTeamDefault())
     user = serializers.HiddenField(default=CurrentUserDefault())
-    trigger_type = serializers.CharField(required=True)
     forward_all = serializers.BooleanField(allow_null=True, required=False)
     last_response_log = serializers.SerializerMethodField()
+    trigger_type = serializers.CharField(allow_null=True)
     trigger_type_name = serializers.SerializerMethodField()
 
     class Meta:
@@ -42,7 +45,6 @@ class WebhookSerializer(serializers.ModelSerializer):
             "is_webhook_enabled",
             "is_legacy",
             "team",
-            "data",
             "user",
             "username",
             "password",
@@ -58,13 +60,43 @@ class WebhookSerializer(serializers.ModelSerializer):
             "trigger_type_name",
             "last_response_log",
             "integration_filter",
+            "preset",
         ]
-        extra_kwargs = {
-            "name": {"required": True, "allow_null": False, "allow_blank": False},
-            "url": {"required": True, "allow_null": False, "allow_blank": False},
-        }
 
         validators = [UniqueTogetherValidator(queryset=Webhook.objects.all(), fields=["name", "organization"])]
+
+    def to_representation(self, instance):
+        result = super().to_representation(instance)
+        if instance.password:
+            result["password"] = WEBHOOK_FIELD_PLACEHOLDER
+        if instance.authorization_header:
+            result["authorization_header"] = WEBHOOK_FIELD_PLACEHOLDER
+        return result
+
+    def to_internal_value(self, data):
+        webhook = self.instance
+
+        # Some fields are conditionally required, add none values for missing required fields
+        if webhook and webhook.preset and "preset" not in data:
+            data["preset"] = webhook.preset
+        for key in ["url", "http_method", "trigger_type"]:
+            if key not in data:
+                if self.instance:
+                    data[key] = getattr(self.instance, key)
+                else:
+                    data[key] = None
+
+        # If webhook is being copied instance won't exist to copy values from
+        if not webhook and "id" in data:
+            webhook = Webhook.objects.get(
+                public_primary_key=data["id"], organization=self.context["request"].auth.organization
+            )
+
+        if data.get("password") == WEBHOOK_FIELD_PLACEHOLDER:
+            data["password"] = webhook.password
+        if data.get("authorization_header") == WEBHOOK_FIELD_PLACEHOLDER:
+            data["authorization_header"] = webhook.authorization_header
+        return super().to_internal_value(data)
 
     def _validate_template_field(self, template):
         try:
@@ -87,9 +119,28 @@ class WebhookSerializer(serializers.ModelSerializer):
         return self._validate_template_field(headers)
 
     def validate_url(self, url):
+        if self.is_field_controlled("url"):
+            return url
+
         if not url:
-            return None
+            raise serializers.ValidationError(detail="This field is required.")
         return self._validate_template_field(url)
+
+    def validate_http_method(self, http_method):
+        if self.is_field_controlled("http_method"):
+            return http_method
+
+        if http_method not in PUBLIC_WEBHOOK_HTTP_METHODS:
+            raise serializers.ValidationError(detail=f"This field must be one of {PUBLIC_WEBHOOK_HTTP_METHODS}.")
+        return http_method
+
+    def validate_trigger_type(self, trigger_type):
+        if self.is_field_controlled("trigger_type"):
+            return trigger_type
+
+        if not trigger_type or int(trigger_type) not in Webhook.ALL_TRIGGER_TYPES:
+            raise serializers.ValidationError(detail="This field is required.")
+        return trigger_type
 
     def validate_data(self, data):
         if not data:
@@ -101,6 +152,29 @@ class WebhookSerializer(serializers.ModelSerializer):
             return False
         return data
 
+    def validate_preset(self, preset):
+        if self.instance and self.instance.preset != preset:
+            raise serializers.ValidationError(detail="This field once set cannot be modified.")
+
+        if preset:
+            if preset not in WebhookPresetOptions.WEBHOOK_PRESETS:
+                raise serializers.ValidationError(detail=f"{preset} is not a valid preset id.")
+
+            preset_metadata = WebhookPresetOptions.WEBHOOK_PRESETS[preset].metadata
+            for controlled_field in preset_metadata.controlled_fields:
+                if controlled_field in self.initial_data:
+                    if self.instance:
+                        if self.initial_data[controlled_field] != getattr(self.instance, controlled_field):
+                            raise serializers.ValidationError(
+                                detail=f"{controlled_field} is controlled by preset, cannot update"
+                            )
+                    elif self.initial_data[controlled_field] is not None:
+                        raise serializers.ValidationError(
+                            detail=f"{controlled_field} is controlled by preset, cannot create"
+                        )
+
+        return preset
+
     def get_last_response_log(self, obj):
         return WebhookResponseSerializer(obj.responses.all().last()).data
 
@@ -109,3 +183,20 @@ class WebhookSerializer(serializers.ModelSerializer):
         if obj.trigger_type is not None:
             trigger_type_name = Webhook.TRIGGER_TYPES[int(obj.trigger_type)][1]
         return trigger_type_name
+
+    def is_field_controlled(self, field_name):
+        if self.instance:
+            if not self.instance.preset:
+                return False
+        elif "preset" not in self.initial_data:
+            return False
+
+        preset_id = self.instance.preset if self.instance else self.initial_data["preset"]
+        if preset_id:
+            if preset_id not in WebhookPresetOptions.WEBHOOK_PRESETS:
+                raise serializers.ValidationError(detail=f"unknown preset {preset_id} referenced")
+
+            preset = WebhookPresetOptions.WEBHOOK_PRESETS[preset_id]
+            if field_name not in preset.metadata.controlled_fields:
+                return False
+        return True

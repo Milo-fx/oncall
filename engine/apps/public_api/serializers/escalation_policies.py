@@ -4,17 +4,19 @@ from datetime import timedelta
 from django.utils.functional import cached_property
 from rest_framework import fields, serializers
 
-from apps.alerts.models import CustomButton, EscalationChain, EscalationPolicy
+from apps.alerts.models import EscalationChain, EscalationPolicy
 from apps.schedules.models import OnCallSchedule
 from apps.slack.models import SlackUserGroup
 from apps.user_management.models import User
+from apps.webhooks.models import Webhook
 from common.api_helpers.custom_fields import (
     CustomTimeField,
     OrganizationFilteredPrimaryKeyRelatedField,
     UsersFilteredByOrganizationField,
 )
 from common.api_helpers.exceptions import BadRequest
-from common.api_helpers.mixins import EagerLoadingMixin, OrderedModelSerializerMixin
+from common.api_helpers.mixins import EagerLoadingMixin
+from common.ordered_model.serializer import OrderedModelSerializer
 
 
 class EscalationPolicyTypeField(fields.CharField):
@@ -35,12 +37,20 @@ class EscalationPolicyTypeField(fields.CharField):
         return step_type
 
 
-class EscalationPolicySerializer(EagerLoadingMixin, OrderedModelSerializerMixin, serializers.ModelSerializer):
+class WebhookTransitionField(OrganizationFilteredPrimaryKeyRelatedField):
+    def get_attribute(self, instance):
+        value = super().get_attribute(instance)
+        if value is None:
+            # fallback to the custom button old value
+            value = instance.custom_button_trigger
+        return value
+
+
+class EscalationPolicySerializer(EagerLoadingMixin, OrderedModelSerializer):
     id = serializers.CharField(read_only=True, source="public_primary_key")
     escalation_chain_id = OrganizationFilteredPrimaryKeyRelatedField(
         queryset=EscalationChain.objects, source="escalation_chain"
     )
-    position = serializers.IntegerField(required=False, source="order")
     type = EscalationPolicyTypeField(source="step", allow_null=True)
     duration = serializers.ChoiceField(required=False, source="wait_delay", choices=EscalationPolicy.DURATION_CHOICES)
     persons_to_notify = UsersFilteredByOrganizationField(
@@ -62,22 +72,20 @@ class EscalationPolicySerializer(EagerLoadingMixin, OrderedModelSerializerMixin,
         source="notify_to_group",
         filter_field="slack_team_identity__organizations",
     )
-    action_to_trigger = OrganizationFilteredPrimaryKeyRelatedField(
-        queryset=CustomButton.objects,
+    action_to_trigger = WebhookTransitionField(
+        queryset=Webhook.objects,
         required=False,
-        source="custom_button_trigger",
+        source="custom_webhook",
     )
-    manual_order = serializers.BooleanField(default=False, write_only=True)
     important = serializers.BooleanField(required=False)
     notify_if_time_from = CustomTimeField(required=False, source="from_time")
     notify_if_time_to = CustomTimeField(required=False, source="to_time")
 
     class Meta:
         model = EscalationPolicy
-        fields = [
+        fields = OrderedModelSerializer.Meta.fields + [
             "id",
             "escalation_chain_id",
-            "position",
             "type",
             "duration",
             "important",
@@ -86,7 +94,6 @@ class EscalationPolicySerializer(EagerLoadingMixin, OrderedModelSerializerMixin,
             "notify_on_call_from_schedule",
             "group_to_notify",
             "action_to_trigger",
-            "manual_order",
             "notify_if_time_from",
             "notify_if_time_to",
             "num_alerts_in_window",
@@ -112,35 +119,9 @@ class EscalationPolicySerializer(EagerLoadingMixin, OrderedModelSerializerMixin,
 
         return step_type
 
-    def validate_action_to_trigger(self, action_to_trigger):
-        if action_to_trigger.team != self.escalation_chain.team:
-            raise BadRequest(detail="Action must be assigned to the same team as the escalation chain")
-
-        return action_to_trigger
-
-    def validate_notify_on_call_from_schedule(self, schedule):
-        if schedule.team != self.escalation_chain.team:
-            raise BadRequest(detail="Schedule must be assigned to the same team as the escalation chain")
-
-        return schedule
-
     def create(self, validated_data):
         validated_data = self._correct_validated_data(validated_data)
-        manual_order = validated_data.pop("manual_order")
-        if not manual_order:
-            order = validated_data.pop("order", None)
-            escalation_chain_id = validated_data.get("escalation_chain")
-            # validate 'order' value before creation
-            self._validate_order(order, {"escalation_chain_id": escalation_chain_id})
-
-            instance = super().create(validated_data)
-            self._change_position(order, instance)
-        else:
-            # validate will raise if there is a duplicated order
-            self._validate_manual_order(None, validated_data)
-            instance = super().create(validated_data)
-
-        return instance
+        return super().create(validated_data)
 
     def to_representation(self, instance):
         step = instance.step
@@ -192,7 +173,7 @@ class EscalationPolicySerializer(EagerLoadingMixin, OrderedModelSerializerMixin,
             fields_to_remove.remove("persons_to_notify_next_each_time")
         elif step in [EscalationPolicy.STEP_NOTIFY_GROUP, EscalationPolicy.STEP_NOTIFY_GROUP_IMPORTANT]:
             fields_to_remove.remove("group_to_notify")
-        elif step == EscalationPolicy.STEP_TRIGGER_CUSTOM_BUTTON:
+        elif step in (EscalationPolicy.STEP_TRIGGER_CUSTOM_BUTTON, EscalationPolicy.STEP_TRIGGER_CUSTOM_WEBHOOK):
             fields_to_remove.remove("action_to_trigger")
         elif step == EscalationPolicy.STEP_NOTIFY_IF_TIME:
             fields_to_remove.remove("notify_if_time_from")
@@ -211,18 +192,6 @@ class EscalationPolicySerializer(EagerLoadingMixin, OrderedModelSerializerMixin,
             result.pop(field, None)
         return result
 
-    def _validate_manual_order(self, instance, validated_data):
-        order = validated_data.get("order")
-        if order is None:
-            return
-
-        policies_with_order = self.escalation_chain.escalation_policies.filter(order=order)
-        if instance and instance.id:
-            policies_with_order = policies_with_order.exclude(id=instance.id)
-
-        if policies_with_order.exists():
-            raise BadRequest(detail="Steps cannot have duplicated positions")
-
     def _correct_validated_data(self, validated_data):
         validated_data_fields_to_remove = [
             "notify_to_users_queue",
@@ -230,6 +199,7 @@ class EscalationPolicySerializer(EagerLoadingMixin, OrderedModelSerializerMixin,
             "notify_schedule",
             "notify_to_group",
             "custom_button_trigger",
+            "custom_webhook",
             "from_time",
             "to_time",
             "num_alerts_in_window",
@@ -237,6 +207,10 @@ class EscalationPolicySerializer(EagerLoadingMixin, OrderedModelSerializerMixin,
         ]
         step = validated_data.get("step")
         important = validated_data.pop("important", None)
+
+        if step == EscalationPolicy.STEP_TRIGGER_CUSTOM_BUTTON and validated_data.get("custom_webhook"):
+            # migrate step to webhook
+            step = validated_data["step"] = EscalationPolicy.STEP_TRIGGER_CUSTOM_WEBHOOK
 
         if step in [EscalationPolicy.STEP_NOTIFY_SCHEDULE, EscalationPolicy.STEP_NOTIFY_SCHEDULE_IMPORTANT]:
             validated_data_fields_to_remove.remove("notify_schedule")
@@ -252,6 +226,8 @@ class EscalationPolicySerializer(EagerLoadingMixin, OrderedModelSerializerMixin,
             validated_data_fields_to_remove.remove("notify_to_group")
         elif step == EscalationPolicy.STEP_TRIGGER_CUSTOM_BUTTON:
             validated_data_fields_to_remove.remove("custom_button_trigger")
+        elif step == EscalationPolicy.STEP_TRIGGER_CUSTOM_WEBHOOK:
+            validated_data_fields_to_remove.remove("custom_webhook")
         elif step == EscalationPolicy.STEP_NOTIFY_IF_TIME:
             validated_data_fields_to_remove.remove("from_time")
             validated_data_fields_to_remove.remove("to_time")
@@ -276,7 +252,7 @@ class EscalationPolicyUpdateSerializer(EscalationPolicySerializer):
     type = EscalationPolicyTypeField(required=False, source="step", allow_null=True)
 
     class Meta(EscalationPolicySerializer.Meta):
-        read_only_fields = ("route_id",)
+        read_only_fields = ["route_id"]
 
     def update(self, instance, validated_data):
         if "step" in validated_data:
@@ -303,21 +279,13 @@ class EscalationPolicyUpdateSerializer(EscalationPolicySerializer):
                     instance.notify_to_group = None
                 if step != EscalationPolicy.STEP_TRIGGER_CUSTOM_BUTTON:
                     instance.custom_button_trigger = None
+                if step != EscalationPolicy.STEP_TRIGGER_CUSTOM_WEBHOOK:
+                    instance.custom_webhook = None
                 if step != EscalationPolicy.STEP_NOTIFY_IF_TIME:
                     instance.from_time = None
                     instance.to_time = None
                 if step != EscalationPolicy.STEP_NOTIFY_IF_NUM_ALERTS_IN_TIME_WINDOW:
                     instance.num_alerts_in_window = None
                     instance.num_minutes_in_window = None
-
-        manual_order = validated_data.pop("manual_order")
-
-        if not manual_order:
-            order = validated_data.pop("order", None)
-            self._validate_order(order, {"escalation_chain_id": instance.escalation_chain_id})
-            self._change_position(order, instance)
-        else:
-            # validate will raise if there is a duplicated order
-            self._validate_manual_order(instance, validated_data)
 
         return super().update(instance, validated_data)

@@ -1,3 +1,4 @@
+import { config } from '@grafana/runtime';
 import dayjs from 'dayjs';
 import { get } from 'lodash-es';
 import { action, computed, observable } from 'mobx';
@@ -56,22 +57,27 @@ export class UserStore extends BaseStore {
   async loadCurrentUser() {
     const response = await makeRequest('/user/', {});
 
-    let timezone;
-    if (!response.timezone && isUserActionAllowed(UserActions.UserSettingsWrite)) {
-      timezone = dayjs.tz.guess();
-      this.update(response.pk, { timezone });
-    }
-
-    timezone = timezone || getTimezone(response);
+    const timezone = await this.refreshTimezone(response.pk);
 
     this.items = {
       ...this.items,
       [response.pk]: { ...response, timezone },
     };
 
+    this.currentUserPk = response.pk;
+  }
+
+  @action
+  async refreshTimezone(id: User['pk']) {
+    const { timezone: grafanaPreferencesTimezone } = config.bootData.user;
+    const timezone = grafanaPreferencesTimezone === 'browser' ? dayjs.tz.guess() : grafanaPreferencesTimezone;
+    if (isUserActionAllowed(UserActions.UserSettingsWrite)) {
+      this.update(id, { timezone });
+    }
+
     this.rootStore.currentTimezone = timezone;
 
-    this.currentUserPk = response.pk;
+    return timezone;
   }
 
   @action
@@ -105,35 +111,39 @@ export class UserStore extends BaseStore {
   }
 
   @action
-  async updateItems(f: any = { searchTerm: '' }, page = 1) {
-    return new Promise<void>(async (resolve) => {
-      const filters = typeof f === 'string' ? { searchTerm: f } : f; // for GSelect compatibility
-      const { searchTerm: search } = filters;
-      const { count, results } = await makeRequest(this.path, {
-        params: { search, page },
-      });
-
-      this.items = {
-        ...this.items,
-        ...results.reduce(
-          (acc: { [key: number]: User }, item: User) => ({
-            ...acc,
-            [item.pk]: {
-              ...item,
-              timezone: getTimezone(item),
-            },
-          }),
-          {}
-        ),
-      };
-
-      this.searchResult = {
-        count,
-        results: results.map((item: User) => item.pk),
-      };
-
-      resolve();
+  async updateItems(f: any = { searchTerm: '' }, page = 1, invalidateFn?: () => boolean): Promise<any> {
+    const filters = typeof f === 'string' ? { searchTerm: f } : f; // for GSelect compatibility
+    const { searchTerm: search } = filters;
+    const response = await makeRequest(this.path, {
+      params: { search, page },
     });
+
+    if (invalidateFn && invalidateFn()) {
+      return;
+    }
+
+    const { count, results } = response;
+
+    this.items = {
+      ...this.items,
+      ...results.reduce(
+        (acc: { [key: number]: User }, item: User) => ({
+          ...acc,
+          [item.pk]: {
+            ...item,
+            timezone: getTimezone(item),
+          },
+        }),
+        {}
+      ),
+    };
+
+    this.searchResult = {
+      count,
+      results: results.map((item: User) => item.pk),
+    };
+
+    return response;
   }
 
   getSearchResult() {
@@ -246,6 +256,14 @@ export class UserStore extends BaseStore {
   }
 
   @action
+  async fetchVerificationCall(userPk: User['pk'], recaptchaToken: string) {
+    await makeRequest(`/users/${userPk}/get_verification_call/`, {
+      method: 'GET',
+      headers: { 'X-OnCall-Recaptcha': recaptchaToken },
+    }).catch(throttlingError);
+  }
+
+  @action
   async verifyPhone(userPk: User['pk'], token: string) {
     return await makeRequest(`/users/${userPk}/verify_number/?token=${token}`, {
       method: 'PUT',
@@ -331,7 +349,7 @@ export class UserStore extends BaseStore {
   async deleteNotificationPolicy(userPk: User['pk'], id: NotificationPolicyType['id']) {
     Mixpanel.track('Delete NotificationPolicy', null);
 
-    await makeRequest(`/notification_policies/${id}`, { method: 'DELETE' });
+    await makeRequest(`/notification_policies/${id}`, { method: 'DELETE' }).catch(this.onApiError);
 
     this.updateNotificationPolicies(userPk);
 
@@ -348,6 +366,16 @@ export class UserStore extends BaseStore {
   }
 
   @action
+  async sendTestPushNotification(userId: User['pk'], isCritical: boolean) {
+    return await makeRequest(`/users/${userId}/send_test_push`, {
+      method: 'POST',
+      params: {
+        critical: isCritical,
+      },
+    });
+  }
+
+  @action
   async updateNotifyByOptions() {
     const response = await makeRequest('/notification_policies/notify_by_options/', {});
 
@@ -358,6 +386,18 @@ export class UserStore extends BaseStore {
     this.isTestCallInProgress = true;
 
     return await makeRequest(`/users/${userPk}/make_test_call/`, {
+      method: 'POST',
+    })
+      .catch(this.onApiError)
+      .finally(() => {
+        this.isTestCallInProgress = false;
+      });
+  }
+
+  async sendTestSms(userPk: User['pk']) {
+    this.isTestCallInProgress = true;
+
+    return await makeRequest(`/users/${userPk}/send_test_sms/`, {
       method: 'POST',
     })
       .catch(this.onApiError)

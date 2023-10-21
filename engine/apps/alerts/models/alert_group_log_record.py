@@ -1,24 +1,37 @@
 import json
 import logging
+import typing
 
 import humanize
-from django.apps import apps
 from django.db import models
 from django.db.models import JSONField
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from rest_framework.fields import DateTimeField
 
-from apps.alerts.tasks import send_update_log_report_signal
+from apps.alerts import tasks
+from apps.alerts.constants import ActionSource
 from apps.alerts.utils import render_relative_timeline
 from apps.slack.slack_formatter import SlackFormatter
 from common.utils import clean_markup
+
+if typing.TYPE_CHECKING:
+    from apps.alerts.models import AlertGroup, CustomButton, EscalationPolicy, Invitation
+    from apps.user_management.models import User
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 
 class AlertGroupLogRecord(models.Model):
+    alert_group: "AlertGroup"
+    author: typing.Optional["User"]
+    custom_button: typing.Optional["CustomButton"]
+    dependent_alert_group: typing.Optional["AlertGroup"]
+    escalation_policy: typing.Optional["EscalationPolicy"]
+    invitation: typing.Optional["Invitation"]
+    root_alert_group: typing.Optional["AlertGroup"]
+
     (
         TYPE_ACK,
         TYPE_UN_ACK,
@@ -62,6 +75,7 @@ class AlertGroupLogRecord(models.Model):
         TYPE_RESOLVED,
         TYPE_UN_RESOLVED,
         TYPE_UN_SILENCE,
+        TYPE_DIRECT_PAGING,
     )
 
     TYPE_CHOICES = (
@@ -141,6 +155,9 @@ class AlertGroupLogRecord(models.Model):
     ) = range(18)
 
     type = models.IntegerField(choices=TYPE_CHOICES)
+
+    # Where the action was performed (e.g. web UI, Slack, API, etc.)
+    action_source = models.SmallIntegerField(ActionSource.choices, null=True, default=None)
 
     author = models.ForeignKey(
         "user_management.User",
@@ -232,10 +249,9 @@ class AlertGroupLogRecord(models.Model):
         return result
 
     def rendered_log_line_action(self, for_slack=False, html=False, substitute_author_with_tag=False):
-        EscalationPolicy = apps.get_model("alerts", "EscalationPolicy")
+        from apps.alerts.models import EscalationPolicy
 
         result = ""
-        author_name = None
         invitee_name = None
         escalation_policy_step = None
         step_specific_info = self.get_step_specific_info()
@@ -245,13 +261,18 @@ class AlertGroupLogRecord(models.Model):
         elif self.escalation_policy is not None:
             escalation_policy_step = self.escalation_policy.step
 
-        if self.author is not None:
+        if self.action_source == ActionSource.API:
+            author_name = "API"
+        elif self.author:
             if substitute_author_with_tag:
                 author_name = "{{author}}"
             elif for_slack:
                 author_name = self.author.get_username_with_slack_verbal()
             else:
                 author_name = self.author.username
+        else:
+            author_name = None
+
         if self.invitation is not None:
             if for_slack:
                 invitee_name = self.invitation.invitee.get_username_with_slack_verbal()
@@ -272,7 +293,7 @@ class AlertGroupLogRecord(models.Model):
                 if escalation_chain is not None:
                     result += f' with escalation chain "{escalation_chain.name}"'
                 else:
-                    result += f" with no escalation chain, skipping escalation"
+                    result += " with no escalation chain, skipping escalation"
             else:
                 result += "alert group assigned to deleted route, skipping escalation"
         elif self.type == AlertGroupLogRecord.TYPE_ACK:
@@ -466,7 +487,7 @@ class AlertGroupLogRecord(models.Model):
                     f"because it is already attached or resolved."
                 )
         elif self.type == AlertGroupLogRecord.TYPE_RESOLVED:
-            result += f"alert group resolved {f'by {author_name}'if author_name else ''}"
+            result += f"resolved {f'by {author_name}'if author_name else ''}"
         elif self.type == AlertGroupLogRecord.TYPE_UN_RESOLVED:
             result += f"unresolved by {author_name}"
         elif self.type == AlertGroupLogRecord.TYPE_WIPED:
@@ -575,4 +596,4 @@ def listen_for_alertgrouplogrecord(sender, instance, created, *args, **kwargs):
             f"send_update_log_report_signal for alert_group {alert_group_pk}, "
             f"alert group event: {instance.get_type_display()}"
         )
-        send_update_log_report_signal.apply_async(kwargs={"alert_group_pk": alert_group_pk}, countdown=8)
+        tasks.send_update_log_report_signal.apply_async(kwargs={"alert_group_pk": alert_group_pk}, countdown=8)

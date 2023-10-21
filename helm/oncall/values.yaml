@@ -3,6 +3,15 @@
 # Set the domain name Grafana OnCall will be installed on.
 # If you want to install grafana as a part of this release make sure to configure grafana.grafana.ini.server.domain too
 base_url: example.com
+base_url_protocol: https
+
+## Optionally specify an array of imagePullSecrets.
+## Secrets must be manually created in the namespace.
+## ref: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
+## e.g:
+## imagePullSecrets:
+##   - name: myRegistryKeySecretName
+imagePullSecrets: []
 
 image:
   # Grafana OnCall docker image repository
@@ -21,7 +30,8 @@ service:
 # Engine pods configuration
 engine:
   replicaCount: 1
-  resources: {}
+  resources:
+    {}
     # limits:
     #   cpu: 100m
     #   memory: 128Mi
@@ -49,10 +59,46 @@ engine:
   ## ref: https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
   tolerations: []
 
+  ## Topology spread constraints for pod assignment
+  ## ref: https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/
+  topologySpreadConstraints: []
+
+  ## Priority class for the pods
+  ## ref: https://kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/
+  priorityClassName: ""
+
+  # Extra containers which runs as sidecar
+  extraContainers: ""
+  # extraContainers: |
+  # - name: cloud-sql-proxy
+  #   image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.1.2
+  #   args:
+  #     - --private-ip
+  #     - --port=5432
+  #     - example:europe-west3:grafana-oncall-db
+
+  # Extra volume mounts for the main app container
+  extraVolumeMounts: []
+  # - name: postgres-tls
+  #   configMap:
+  #     name: my-postgres-tls
+  #     defaultMode: 0640
+  # - name: redis-tls
+  #   configMap:
+  #     name: my-redis-tls
+  #     defaultMode: 0640
+
+  # Extra volumes for the pod
+  extraVolumes: []
+  # - mountPath: /mnt/postgres-tls
+  #   name: postgres-tls
+  # - mountPath: /mnt/redis-tls
+  #   name: redis-tls
+
 # Celery workers pods configuration
 celery:
   replicaCount: 1
-  worker_queue: "default,critical,long,slack,telegram,webhook,celery"
+  worker_queue: "default,critical,long,slack,telegram,webhook,celery,grafana"
   worker_concurrency: "1"
   worker_max_tasks_per_child: "100"
   worker_beat_enabled: "True"
@@ -67,6 +113,66 @@ celery:
     initialDelaySeconds: 30
     periodSeconds: 300
     timeoutSeconds: 10
+  resources:
+    {}
+    # limits:
+    #   cpu: 100m
+    #   memory: 128Mi
+    # requests:
+    #   cpu: 100m
+    #   memory: 128Mi
+
+  ## Affinity for pod assignment
+  ## ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#affinity-and-anti-affinity
+  affinity: {}
+
+  ## Node labels for pod assignment
+  ## ref: https://kubernetes.io/docs/user-guide/node-selection/
+  nodeSelector: {}
+
+  ## Tolerations for pod assignment
+  ## ref: https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
+  tolerations: []
+
+  ## Topology spread constraints for pod assignment
+  ## ref: https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/
+  topologySpreadConstraints: []
+
+  ## Priority class for the pods
+  ## ref: https://kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/
+  priorityClassName: ""
+
+  # Extra containers which runs as sidecar
+  extraContainers: ""
+  # extraContainers: |
+  # - name: cloud-sql-proxy
+  #   image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.1.2
+  #   args:
+  #     - --private-ip
+  #     - --port=5432
+  #     - example:europe-west3:grafana-oncall-db
+
+  # Extra volume mounts for the main container
+  extraVolumeMounts: []
+  # - name: postgres-tls
+  #   configMap:
+  #     name: my-postgres-tls
+  #     defaultMode: 0640
+  # - name: redis-tls
+  #   configMap:
+  #     name: my-redis-tls
+  #     defaultMode: 0640
+
+  # Extra volumes for the pod
+  extraVolumes: []
+  # - mountPath: /mnt/postgres-tls
+  #   name: postgres-tls
+  # - mountPath: /mnt/redis-tls
+  #   name: redis-tls
+
+# Telegram polling pod configuration
+telegramPolling:
+  enabled: false
   resources: {}
     # limits:
     #   cpu: 100m
@@ -75,7 +181,30 @@ celery:
     #   cpu: 100m
     #   memory: 128Mi
 
+  # Extra volume mounts for the main container
+  extraVolumeMounts: []
+  # - name: postgres-tls
+  #   configMap:
+  #     name: my-postgres-tls
+  #     defaultMode: 0640
+  # - name: redis-tls
+  #   configMap:
+  #     name: my-redis-tls
+  #     defaultMode: 0640
+
+  # Extra volumes for the pod
+  extraVolumes: []
+  # - mountPath: /mnt/postgres-tls
+  #   name: postgres-tls
+  # - mountPath: /mnt/redis-tls
+  #   name: redis-tls
+
 oncall:
+  # this is intended to be used for local development. In short, it will mount the ./engine dir into
+  # any backend related containers, to allow hot-reloading + also run the containers with slightly modified
+  # startup commands (which configures the hot-reloading)
+  devMode: false
+
   # Override default MIRAGE_CIPHER_IV (must be 16 bytes long)
   # For existing installation, this should not be changed.
   # mirageCipherIV: 1234567890abcdef
@@ -83,15 +212,15 @@ oncall:
   secrets:
     # Use existing secret. (secretKey and mirageSecretKey is required)
     existingSecret: ""
-    # the key in the secret containing secret key
+    # The key in the secret containing secret key
     secretKey: ""
-    # the key in the secret containing mirage secret key
+    # The key in the secret containing mirage secret key
     mirageSecretKey: ""
-  # slack configures the Grafana Oncall Slack ChatOps integration.
+  # Slack configures the Grafana Oncall Slack ChatOps integration.
   slack:
-    # enabled enable the Slack ChatOps integration for the Oncall Engine.
+    # Enable the Slack ChatOps integration for the Oncall Engine.
     enabled: false
-    # commandName sets the Slack bot slash-command
+    # Sets the Slack bot slash-command
     commandName: oncall
     # clientId configures the Slack app OAuth2 client ID.
     # api.slack.com/apps/<yourApp> -> Basic Information -> App Credentials -> Client ID
@@ -99,18 +228,18 @@ oncall:
     # clientSecret configures the Slack app OAuth2 client secret.
     # api.slack.com/apps/<yourApp> -> Basic Information -> App Credentials -> Client Secret
     clientSecret: ~
-    # signingSecret configures the Slack app signature secret used to sign
+    # signingSecret - configures the Slack app signature secret used to sign
     # requests comming from Slack.
     # api.slack.com/apps/<yourApp> -> Basic Information -> App Credentials -> Signing Secret
     signingSecret: ~
     # Use existing secret for clientId, clientSecret and signingSecret.
     # clientIdKey, clientSecretKey and signingSecretKey are required
     existingSecret: ""
-    # the key in the secret containing OAuth2 client ID
+    # The key in the secret containing OAuth2 client ID
     clientIdKey: ""
-    # the key in the secret containing OAuth2 client secret
+    # The key in the secret containing OAuth2 client secret
     clientSecretKey: ""
-    # the key in the secret containing the Slack app signature secret
+    # The key in the secret containing the Slack app signature secret
     signingSecretKey: ""
     # OnCall external URL
     redirectHost: ~
@@ -118,24 +247,28 @@ oncall:
     enabled: false
     token: ~
     webhookUrl: ~
-    # Use exsting secret. (tokenKey is required)
+    # Use existing secret. (tokenKey is required)
     existingSecret: ""
-    # the key in the secret containing Telegram token
+    # The key in the secret containing Telegram token
     tokenKey: ""
   smtp:
-    enabled: false
+    enabled: true
     host: ~
     port: ~
     username: ~
     password: ~
     tls: ~
     fromEmail: ~
+  exporter:
+    enabled: false
+    authToken: ~
   twilio:
     # Twilio account SID/username to allow OnCall to send SMSes and make phone calls
     accountSid: ""
     # Twilio password to allow OnCall to send SMSes and make calls
     authToken: ""
-    # Number from which you will receive calls and SMS (NOTE: must be quoted, otherwise would be rendered as float value)
+    # Number from which you will receive calls and SMS
+    # (NOTE: must be quoted, otherwise would be rendered as float value)
     phoneNumber: ""
     # SID of Twilio service for number verification. You can create a service in Twilio web interface.
     # twilio.com -> verify -> create new service
@@ -147,16 +280,19 @@ oncall:
     # Use existing secret for authToken, phoneNumber, verifySid, apiKeySid and apiKeySecret.
     existingSecret: ""
     # Twilio password to allow OnCall to send SMSes and make calls
-    # the key in the secret containing the auth token
+    # The key in the secret containing the auth token
     authTokenKey: ""
-    # the key in the secret containing the phone number
+    # The key in the secret containing the phone number
     phoneNumberKey: ""
-    # the key in the secret containing verify service sid
+    # The key in the secret containing verify service sid
     verifySidKey: ""
-    # the key in the secret containing api key sid
+    # The key in the secret containing api key sid
     apiKeySidKey: ""
-    # the key in the secret containing the api key secret
+    # The key in the secret containing the api key secret
     apiKeySecretKey: ""
+    # Phone notifications limit (the only non-secret value).
+    # TODO: rename to phoneNotificationLimit
+    limitPhone:
 
 # Whether to run django database migrations automatically
 migrate:
@@ -165,6 +301,62 @@ migrate:
   ttlSecondsAfterFinished: 20
   # use a helm hook to manage the migration job
   useHook: false
+  annotations: {}
+
+  ## Affinity for pod assignment
+  ## ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#affinity-and-anti-affinity
+  affinity: {}
+
+  ## Node labels for pod assignment
+  ## ref: https://kubernetes.io/docs/user-guide/node-selection/
+  nodeSelector: {}
+
+  ## Tolerations for pod assignment
+  ## ref: https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
+  tolerations: []
+
+  # Extra containers which runs as sidecar
+  extraContainers: ""
+  # extraContainers: |
+  # - name: cloud-sql-proxy
+  #   image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.1.2
+  #   args:
+  #     - --private-ip
+  #     - --port=5432
+  #     - example:europe-west3:grafana-oncall-db
+  resources:
+    {}
+    # limits:
+    #   cpu: 100m
+    #   memory: 128Mi
+    # requests:
+    #   cpu: 100m
+    #   memory: 128Mi
+
+  # Extra volume mounts for the main container
+  extraVolumeMounts: []
+  # - name: postgres-tls
+  #   configMap:
+  #     name: my-postgres-tls
+  #     defaultMode: 0640
+  # - name: redis-tls
+  #   configMap:
+  #     name: my-redis-tls
+  #     defaultMode: 0640
+
+  # Extra volumes for the pod
+  extraVolumes: []
+  # - mountPath: /mnt/postgres-tls
+  #   name: postgres-tls
+  # - mountPath: /mnt/redis-tls
+  #   name: redis-tls
+
+# Sets environment variables with name capitalized and prefixed with UWSGI_,
+# and dashes are substituted with underscores.
+# see more: https://uwsgi-docs.readthedocs.io/en/latest/Configuration.html#environment-variables
+# Set null to disable all UWSGI environment variables
+uwsgi:
+  listen: 1024
 
 # Additional env variables to add to deployments
 env: {}
@@ -229,6 +421,7 @@ mariadb:
   enabled: true
   auth:
     database: oncall
+    existingSecret:
   primary:
     extraEnvVars:
       - name: MARIADB_COLLATE
@@ -250,6 +443,21 @@ externalMysql:
   db_name:
   user:
   password:
+  # Use an existing secret for the mysql password.
+  existingSecret:
+  # The key in the secret containing the mysql username
+  usernameKey:
+  # The key in the secret containing the mysql password
+  passwordKey:
+  # Extra options (see example below)
+  # Reference: https://pymysql.readthedocs.io/en/latest/modules/connections.html
+  options:
+  # options: >-
+  #   ssl_verify_cert=true
+  #   ssl_verify_identity=true
+  #   ssl_ca=/mnt/mysql-tls/ca.crt
+  #   ssl_cert=/mnt/mysql-tls/client.crt
+  #   ssl_key=/mnt/mysql-tls/client.key
 
 # PostgreSQL is included into this release for the convenience.
 # It is recommended to host it separately from this release
@@ -258,25 +466,36 @@ postgresql:
   enabled: false
   auth:
     database: oncall
+    existingSecret:
 
 # Make sure to create the database with the following parameters:
-# CREATE DATABASE oncall CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+# CREATE DATABASE oncall WITH ENCODING UTF8;
 externalPostgresql:
   host:
   port:
   db_name:
   user:
   password:
-  # use an existing secret for the database password
-  existingSecret: ""
-  # the key in the secret containing the database password
+  # Use an existing secret for the database password
+  existingSecret:
+  # The key in the secret containing the database password
   passwordKey:
+  # Extra options (see example below)
+  # Reference: https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-PARAMKEYWORDS
+  options:
+  # options: >-
+  #   sslmode=verify-full
+  #   sslrootcert=/mnt/postgres-tls/ca.crt
+  #   sslcert=/mnt/postgres-tls/client.crt
+  #   sslkey=/mnt/postgres-tls/client.key
 
 # RabbitMQ is included into this release for the convenience.
 # It is recommended to host it separately from this release
 # Set rabbitmq.enabled = false and configure externalRabbitmq
 rabbitmq:
   enabled: true
+  auth:
+    existingPasswordSecret:
 
 broker:
   type: rabbitmq
@@ -288,21 +507,42 @@ externalRabbitmq:
   password:
   protocol:
   vhost:
-  # use an existing secret for the rabbitmq password
-  existingSecret: ""
-  # the key in the secret containing the rabbitmq password
-  passwordKey: password
-  # the key in the secret containing the rabbitmq username
+  # Use an existing secret for the rabbitmq password
+  existingSecret:
+  # The key in the secret containing the rabbitmq password
+  passwordKey: ""
+  # The key in the secret containing the rabbitmq username
   usernameKey: username
 
 # Redis is included into this release for the convenience.
 # It is recommended to host it separately from this release
 redis:
   enabled: true
+  auth:
+    existingSecret:
 
 externalRedis:
+  protocol:
   host:
+  port:
+  database:
+  username:
   password:
+  # Use an existing secret for the redis password
+  existingSecret:
+  # The key in the secret containing the redis password
+  passwordKey:
+
+  # SSL options
+  ssl_options:
+    enabled: false
+    # CA certificate
+    ca_certs:
+    # Client SSL certs
+    certfile:
+    keyfile:
+    # SSL verification mode: "cert_none" | "cert_optional" | "cert_required"
+    cert_reqs:
 
 # Grafana is included into this release for the convenience.
 # It is recommended to host it separately from this release
@@ -315,10 +555,14 @@ grafana:
       serve_from_sub_path: true
   persistence:
     enabled: true
+  # Disable psp as PodSecurityPolicy is deprecated in v1.21+, unavailable in v1.25+
+  rbac:
+    pspEnabled: false
   plugins:
     - grafana-oncall-app
 
 externalGrafana:
+  # Example: https://grafana.mydomain.com
   url:
 
 nameOverride: ""
@@ -335,25 +579,47 @@ serviceAccount:
 
 podAnnotations: {}
 
-podSecurityContext: {}
+podSecurityContext:
+  {}
   # fsGroup: 2000
 
-securityContext: {}
+securityContext:
+  {}
   # capabilities:
   #   drop:
   #   - ALL
   # readOnlyRootFilesystem: true
   # runAsNonRoot: true
+  # runAsGroup: 2000
   # runAsUser: 1000
 
 init:
-  securityContext: {}
+  securityContext:
+    {}
     # allowPrivilegeEscalation: false
     # capabilities:
     #   drop:
     #   - ALL
     # privileged: false
     # readOnlyRootFilesystem: true
-    # runAsGroup: 1337
+    # runAsGroup: 2000
     # runAsNonRoot: true
-    # runAsUser: 1337
+    # runAsUser: 1000
+  resources:
+    {}
+    # limits:
+    #   cpu: 100m
+    #   memory: 128Mi
+    # requests:
+    #   cpu: 100m
+    #   memory: 128Mi
+
+ui:
+  # this is intended to be used for local development. In short, it will spin up an additional container
+  # running the plugin frontend, such that hot reloading can be enabled
+  enabled: false
+  image:
+    repository: oncall/ui
+    tag: dev
+  # Additional env vars for the ui container
+  env: {}

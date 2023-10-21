@@ -36,8 +36,9 @@ const ScheduleUserDetails: FC<ScheduleUserDetailsProps> = (props) => {
   const colorSchemeMapping = getColorSchemeMappingForUsers(store, scheduleId, startMoment);
   const colorSchemeList = Array.from(colorSchemeMapping[user.pk] || []);
 
-  const { teamStore } = store;
-  const slackWorkspaceName = teamStore.currentTeam.slack_team_identity?.cached_name?.replace(/[^0-9a-z]/gi, '') || '';
+  const { organizationStore } = store;
+  const slackWorkspaceName =
+    organizationStore.currentOrganization.slack_team_identity?.cached_name?.replace(/[^0-9a-z]/gi, '') || '';
 
   return (
     <div className={cx('root')}>
@@ -55,7 +56,7 @@ const ScheduleUserDetails: FC<ScheduleUserDetailsProps> = (props) => {
             <Text type="primary">{user.username}</Text>
           </div>
           <HorizontalGroup spacing="xs">
-            {isOncall && <Badge text="OnCall" color="green" />}
+            {isOncall && <Badge text="On-call" color="green" />}
             {isInWH ? (
               <Badge text="Inside working hours" color="blue" />
             ) : (

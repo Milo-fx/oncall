@@ -15,6 +15,7 @@ from apps.api.serializers.escalation_chain import (
     FilterEscalationChainSerializer,
 )
 from apps.auth_token.auth import PluginAuthentication
+from apps.mobile_app.auth import MobileAppAuthTokenAuthentication
 from apps.user_management.models import Team
 from common.api_helpers.exceptions import BadRequest
 from common.api_helpers.filters import ByTeamModelFieldFilterMixin, ModelFieldFilterMixin, TeamModelMultipleChoiceFilter
@@ -38,7 +39,10 @@ class EscalationChainViewSet(
     ListSerializerMixin,
     viewsets.ModelViewSet,
 ):
-    authentication_classes = (PluginAuthentication,)
+    authentication_classes = (
+        MobileAppAuthTokenAuthentication,
+        PluginAuthentication,
+    )
     permission_classes = (IsAuthenticated, RBACPermission)
 
     rbac_permissions = {
@@ -120,6 +124,8 @@ class EscalationChainViewSet(
 
     @action(methods=["post"], detail=True)
     def copy(self, request, pk):
+        obj = self.get_object()
+
         name = request.data.get("name")
         team_id = request.data.get("team")
         if team_id == "null":
@@ -131,7 +137,6 @@ class EscalationChainViewSet(
             if EscalationChain.objects.filter(organization=request.auth.organization, name=name).exists():
                 raise BadRequest(detail={"name": ["Escalation chain with this name already exists."]})
 
-        obj = self.get_object()
         try:
             team = request.user.available_teams.get(public_primary_key=team_id) if team_id else None
         except Team.DoesNotExist:
@@ -165,7 +170,7 @@ class EscalationChainViewSet(
                 channel_filter["alert_receive_channel__public_primary_key"],
                 {
                     "id": channel_filter["alert_receive_channel__public_primary_key"],
-                    "display_name": emojize(channel_filter["alert_receive_channel__verbal_name"], use_aliases=True),
+                    "display_name": emojize(channel_filter["alert_receive_channel__verbal_name"], language="alias"),
                     "channel_filters": [],
                 },
             )["channel_filters"].append(channel_filter_data)

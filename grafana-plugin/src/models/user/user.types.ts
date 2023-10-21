@@ -1,4 +1,3 @@
-import { Team } from 'models/team/team.types';
 import { Timezone } from 'models/timezone/timezone.types';
 
 export interface MessagingBackends {
@@ -11,7 +10,9 @@ export interface User {
   email: string;
   phone: string;
   avatar: string;
+  avatar_full: string;
   name: string;
+  display_name: string;
   company: string;
   hide_phone_number: boolean;
   role_in_company: string;
@@ -36,7 +37,6 @@ export interface User {
     slack_login: string;
   } | null;
   post_onboarding_entry_allowed: any;
-  teams: Team[];
   current_team: string | null;
   onboarding_conversation_data: {
     image_link: string | null;

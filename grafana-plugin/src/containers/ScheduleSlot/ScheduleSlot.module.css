@@ -8,6 +8,8 @@
   margin: 0 1px;
   padding: 4px;
   align-items: center;
+  transition: opacity 0.2s ease;
+  cursor: pointer;
 }
 
 .working-hours {
@@ -31,8 +33,23 @@
   visibility: hidden;
 }
 
+.root__type_shift-swap {
+  border-radius: 10px;
+  background: #ff99002e;
+  height: 20px;
+}
+
+.no-user {
+  width: 12px;
+  height: 12px;
+  background: var(--tag-background-primary);
+  border-radius: 50%;
+  display: flex;
+  justify-content: center;
+}
+
 .root__inactive {
-  opacity: 0.5;
+  opacity: 0.3;
 }
 
 .title {
@@ -59,7 +76,8 @@
 }
 
 .details {
-  width: auto;
+  width: 250px;
+  padding: 5px 0;
 }
 
 .details-user-status {
@@ -83,5 +101,29 @@
 
 .is-oncall-icon {
   color: var(--oncall-icon-stroke-color);
-  margin-left: -2px;
+  vertical-align: middle;
+}
+
+.details-icon {
+  width: 16px;
+  margin-right: 4px;
+}
+
+.badge {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin: 0 auto;
+}
+
+.username {
+  word-break: break-word;
+}
+
+.second-column {
+  width: 102px;
+}
+
+.icon {
+  color: var(--secondary-text-color);
 }

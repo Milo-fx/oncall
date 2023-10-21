@@ -1,6 +1,4 @@
 ---
-aliases:
-  - /docs/oncall/latest/oncall-api-reference/users/
 canonical: https://grafana.com/docs/oncall/latest/oncall-api-reference/users/
 title: Grafana OnCall Users HTTP API
 weight: 1500
@@ -10,7 +8,6 @@ weight: 1500
 
 This endpoint retrieves the user object.
 
-````shell
 ```shell
 curl "{{API_URL}}/api/v1/users/current/" \
   --request GET \
@@ -78,7 +75,10 @@ The above command returns JSON structured in the following way:
       "username": "alex",
       "role": "admin"
     }
-  ]
+  ],
+  "current_page_number": 1,
+  "page_size": 100,
+  "total_pages": 1
 }
 ```
 

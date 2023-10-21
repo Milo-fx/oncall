@@ -3,12 +3,14 @@ import React, { FC, useMemo, useState } from 'react';
 import { HorizontalGroup, LoadingPlaceholder } from '@grafana/ui';
 import cn from 'classnames/bind';
 import dayjs from 'dayjs';
+import hash from 'object-hash';
 
+import { ScheduleFiltersType } from 'components/ScheduleFilters/ScheduleFilters.types';
+import Text from 'components/Text/Text';
 import ScheduleSlot from 'containers/ScheduleSlot/ScheduleSlot';
-import { Schedule, Event, RotationFormLiveParams } from 'models/schedule/schedule.types';
+import { Event, RotationFormLiveParams, ShiftSwap } from 'models/schedule/schedule.types';
 import { Timezone } from 'models/timezone/timezone.types';
 
-import { getLabel } from './Rotation.helpers';
 import RotationTutorial from './RotationTutorial';
 
 import styles from './Rotation.module.css';
@@ -16,44 +18,113 @@ import styles from './Rotation.module.css';
 const cx = cn.bind(styles);
 
 interface RotationProps {
-  scheduleId: Schedule['id'];
   startMoment: dayjs.Dayjs;
   currentTimezone: Timezone;
   layerIndex?: number;
   rotationIndex?: number;
   color?: string;
   events: Event[];
-  onClick?: (moment: dayjs.Dayjs) => void;
+  onClick?: (start: dayjs.Dayjs, end: dayjs.Dayjs) => void;
+  handleAddOverride?: (start: dayjs.Dayjs, end: dayjs.Dayjs) => void;
+  handleAddShiftSwap?: (id: 'new', params: Partial<ShiftSwap>) => void;
+  handleOpenSchedule?: (event: Event) => void;
+  onShiftSwapClick?: (swapId: ShiftSwap['id']) => void;
   days?: number;
   transparent?: boolean;
   tutorialParams?: RotationFormLiveParams;
+  simplified?: boolean;
+  filters?: ScheduleFiltersType;
+  getColor?: (event: Event) => string;
+  onSlotClick?: (event: Event) => void;
+  emptyText?: string;
+  showScheduleNameAsSlotTitle?: boolean;
 }
 
 const Rotation: FC<RotationProps> = (props) => {
   const {
     events,
-    scheduleId,
-    layerIndex,
-    rotationIndex,
     startMoment,
     currentTimezone,
-    color,
-    onClick,
+    color: propsColor,
     days = 7,
     transparent = false,
     tutorialParams,
+    onClick,
+    handleAddOverride,
+    handleAddShiftSwap,
+    handleOpenSchedule,
+    onShiftSwapClick,
+    simplified,
+    filters,
+    getColor,
+    onSlotClick,
+    emptyText,
+    showScheduleNameAsSlotTitle,
   } = props;
 
   const [animate, _setAnimate] = useState<boolean>(true);
 
-  const handleClick = (event) => {
+  const handleRotationClick = (event: React.MouseEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left; //x position within the element.
     const width = event.currentTarget.offsetWidth;
 
     const dayOffset = Math.floor((x / width) * 7);
 
-    onClick(startMoment.add(dayOffset, 'day'));
+    const shiftStart = startMoment.add(dayOffset, 'day');
+    const shiftEnd = shiftStart.add(1, 'day');
+
+    onClick(shiftStart, shiftEnd);
+  };
+
+  const getAddOverrideClickHandler = (scheduleEvent: Event) => {
+    if (simplified) {
+      return undefined;
+    }
+
+    return (event: React.MouseEvent<HTMLDivElement>) => {
+      event.stopPropagation();
+
+      handleAddOverride(dayjs(scheduleEvent.start), dayjs(scheduleEvent.end));
+    };
+  };
+
+  const getAddShiftSwapClickHandler = (scheduleEvent: Event) => {
+    if (simplified) {
+      return undefined;
+    }
+
+    return (event: React.MouseEvent<HTMLDivElement>) => {
+      event.stopPropagation();
+
+      handleAddShiftSwap('new', {
+        swap_start: scheduleEvent.start,
+        swap_end: scheduleEvent.end,
+      });
+    };
+  };
+
+  const getOpenScheduleClickHandler = (scheduleEvent: Event) => {
+    if (!handleOpenSchedule) {
+      return undefined;
+    }
+
+    return (event: React.MouseEvent<HTMLDivElement>) => {
+      event.stopPropagation();
+
+      handleOpenSchedule(scheduleEvent);
+    };
+  };
+
+  const getSlotClickHandler = (event: Event) => {
+    if (!onSlotClick) {
+      return undefined;
+    }
+    return (e) => {
+      e.stopPropagation();
+
+      onSlotClick(event);
+    };
   };
 
   const x = useMemo(() => {
@@ -68,13 +139,8 @@ const Rotation: FC<RotationProps> = (props) => {
     return firstShiftOffset / base;
   }, [events]);
 
-  let eventIndexToShowLabel = -1;
-  if (!isNaN(layerIndex) && !isNaN(rotationIndex)) {
-    eventIndexToShowLabel = events.findIndex((event) => dayjs(event.start).isSameOrAfter(startMoment));
-  }
-
   return (
-    <div className={cx('root')} onClick={handleClick}>
+    <div className={cx('root')} onClick={onClick && handleRotationClick}>
       <div className={cx('timeline')}>
         {tutorialParams && <RotationTutorial startMoment={startMoment} {...tutorialParams} />}
         {events ? (
@@ -83,22 +149,27 @@ const Rotation: FC<RotationProps> = (props) => {
               className={cx('slots', { slots__animate: animate, slots__transparent: transparent })}
               style={{ transform: `translate(${x * 100}%, 0)` }}
             >
-              {events.map((event, index) => {
+              {events.map((event) => {
                 return (
                   <ScheduleSlot
-                    scheduleId={scheduleId}
-                    key={event.start}
+                    key={hash(event)}
                     event={event}
                     startMoment={startMoment}
                     currentTimezone={currentTimezone}
-                    color={color}
-                    label={index === eventIndexToShowLabel && getLabel(layerIndex, rotationIndex)}
+                    color={propsColor || getColor(event)}
+                    handleAddOverride={getAddOverrideClickHandler(event)}
+                    handleAddShiftSwap={getAddShiftSwapClickHandler(event)}
+                    handleOpenSchedule={getOpenScheduleClickHandler(event)}
+                    onShiftSwapClick={onShiftSwapClick}
+                    filters={filters}
+                    onClick={getSlotClickHandler(event)}
+                    showScheduleNameAsSlotTitle={showScheduleNameAsSlotTitle}
                   />
                 );
               })}
             </div>
           ) : (
-            <Empty />
+            <Empty text={emptyText} />
           )
         ) : (
           <HorizontalGroup align="center" justify="center">
@@ -110,8 +181,12 @@ const Rotation: FC<RotationProps> = (props) => {
   );
 };
 
-const Empty = () => {
-  return <div className={cx('empty')} />;
+const Empty = ({ text }: { text: string }) => {
+  return (
+    <div className={cx('empty')}>
+      <Text type="secondary">{text}</Text>
+    </div>
+  );
 };
 
 export default Rotation;

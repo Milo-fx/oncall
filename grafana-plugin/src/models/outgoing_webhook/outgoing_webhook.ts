@@ -4,7 +4,7 @@ import BaseStore from 'models/base_store';
 import { makeRequest } from 'network';
 import { RootStore } from 'state';
 
-import { OutgoingWebhook } from './outgoing_webhook.types';
+import { OutgoingWebhook, OutgoingWebhookPreset } from './outgoing_webhook.types';
 
 export class OutgoingWebhookStore extends BaseStore {
   @observable.shallow
@@ -13,13 +13,13 @@ export class OutgoingWebhookStore extends BaseStore {
   @observable.shallow
   searchResult: { [key: string]: Array<OutgoingWebhook['id']> } = {};
 
-  @observable
-  incidentFilters: any;
+  @observable.shallow
+  outgoingWebhookPresets: OutgoingWebhookPreset[] = [];
 
   constructor(rootStore: RootStore) {
     super(rootStore);
 
-    this.path = '/custom_buttons/';
+    this.path = '/webhooks/';
   }
 
   @action
@@ -46,26 +46,11 @@ export class OutgoingWebhookStore extends BaseStore {
 
   @action
   async updateItem(id: OutgoingWebhook['id'], fromOrganization = false) {
-    let outgoingWebhook;
-
-    try {
-      outgoingWebhook = await this.getById(id, true, fromOrganization);
-    } catch (error) {
-      if (error.response.data.error_code === 'wrong_team') {
-        outgoingWebhook = {
-          id,
-          name: '🔒 Private outgoing webhook',
-          private: true,
-        };
-      }
-    }
-
-    if (outgoingWebhook) {
-      this.items = {
-        ...this.items,
-        [id]: outgoingWebhook,
-      };
-    }
+    const response = await this.getById(id, false, fromOrganization);
+    this.items = {
+      ...this.items,
+      [id]: response,
+    };
   }
 
   @action
@@ -95,18 +80,30 @@ export class OutgoingWebhookStore extends BaseStore {
     };
   }
 
-  @action
-  async updateOutgoingWebhooksFilters(params: any) {
-    this.incidentFilters = params;
-
-    this.updateItems();
-  }
-
   getSearchResult(query = '') {
     if (!this.searchResult[query]) {
       return undefined;
     }
 
     return this.searchResult[query].map((outgoingWebhookId: OutgoingWebhook['id']) => this.items[outgoingWebhookId]);
+  }
+
+  async getLastResponses(id: OutgoingWebhook['id']) {
+    const result = await makeRequest(`${this.path}${id}/responses`, {});
+
+    return result;
+  }
+
+  async renderPreview(id: OutgoingWebhook['id'], template_name: string, template_body: string, payload) {
+    return await makeRequest(`${this.path}${id}/preview_template/`, {
+      method: 'POST',
+      data: { template_name, template_body, payload },
+    });
+  }
+
+  @action
+  async updateOutgoingWebhookPresets() {
+    const response = await makeRequest(`/webhooks/preset_options/`, {});
+    this.outgoingWebhookPresets = response;
   }
 }

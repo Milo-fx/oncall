@@ -1,4 +1,5 @@
 import pytest
+from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -9,7 +10,6 @@ from apps.api.views.features import (
     FEATURE_LIVE_SETTINGS,
     FEATURE_SLACK,
     FEATURE_TELEGRAM,
-    FEATURE_WEB_SCHEDULES,
 )
 
 
@@ -37,7 +37,6 @@ def test_features_view(
         ("FEATURE_SLACK_INTEGRATION_ENABLED", FEATURE_SLACK),
         ("FEATURE_TELEGRAM_INTEGRATION_ENABLED", FEATURE_TELEGRAM),
         ("FEATURE_LIVE_SETTINGS_ENABLED", FEATURE_LIVE_SETTINGS),
-        ("FEATURE_WEB_SCHEDULES_ENABLED", FEATURE_WEB_SCHEDULES),
     ],
 )
 def test_core_features_switch(
@@ -65,6 +64,7 @@ def test_core_features_switch(
 
 
 @pytest.mark.django_db
+@override_settings(GRAFANA_CLOUD_NOTIFICATIONS_ENABLED=True)
 def test_oss_features_enabled_in_oss_installation_by_default(
     make_organization_and_user_with_plugin_token,
     make_user_auth_headers,

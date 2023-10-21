@@ -25,7 +25,6 @@ export enum Resource {
   OTHER_SETTINGS = 'other-settings',
 
   TEAMS = 'teams',
-  PLUGINS = 'plugins',
 }
 
 export enum Action {
@@ -35,12 +34,13 @@ export enum Action {
   TEST = 'test',
   EXPORT = 'export',
   UPDATE_SETTINGS = 'update-settings',
-  INSTALL = 'install',
+  DIRECT_PAGING = 'direct-paging',
 }
 
 type Actions =
   | 'AlertGroupsRead'
   | 'AlertGroupsWrite'
+  | 'AlertGroupsDirectPaging'
   | 'IntegrationsRead'
   | 'IntegrationsWrite'
   | 'IntegrationsTest'
@@ -66,8 +66,7 @@ type Actions =
   | 'UserSettingsAdmin'
   | 'OtherSettingsRead'
   | 'OtherSettingsWrite'
-  | 'TeamsWrite'
-  | 'PluginsInstall';
+  | 'TeamsWrite';
 
 const roleMapping: Record<OrgRole, number> = {
   [OrgRole.Admin]: 0,
@@ -125,6 +124,7 @@ const constructAction = (
 export const UserActions: { [action in Actions]: UserAction } = {
   AlertGroupsRead: constructAction(Resource.ALERT_GROUPS, Action.READ, OrgRole.Viewer),
   AlertGroupsWrite: constructAction(Resource.ALERT_GROUPS, Action.WRITE, OrgRole.Editor),
+  AlertGroupsDirectPaging: constructAction(Resource.ALERT_GROUPS, Action.DIRECT_PAGING, OrgRole.Editor),
 
   IntegrationsRead: constructAction(Resource.INTEGRATIONS, Action.READ, OrgRole.Viewer),
   IntegrationsWrite: constructAction(Resource.INTEGRATIONS, Action.WRITE, OrgRole.Admin),
@@ -164,5 +164,4 @@ export const UserActions: { [action in Actions]: UserAction } = {
 
   // These are not oncall specific
   TeamsWrite: constructAction(Resource.TEAMS, Action.WRITE, OrgRole.Admin, false),
-  PluginsInstall: constructAction(Resource.PLUGINS, Action.INSTALL, OrgRole.Admin, false),
 };

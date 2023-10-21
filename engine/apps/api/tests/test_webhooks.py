@@ -1,5 +1,4 @@
 import json
-from unittest import mock
 from unittest.mock import patch
 
 import pytest
@@ -9,7 +8,9 @@ from rest_framework.response import Response
 from rest_framework.test import APIClient
 
 from apps.api.permissions import LegacyAccessControlRole
+from apps.api.views.webhooks import RECENT_RESPONSE_LIMIT, WEBHOOK_URL
 from apps.webhooks.models import Webhook
+from apps.webhooks.models.webhook import WEBHOOK_FIELD_PLACEHOLDER
 
 TEST_URL = "https://some-url"
 
@@ -44,8 +45,8 @@ def test_get_list_webhooks(webhook_internal_api_setup, make_user_auth_headers):
             "url": "https://github.com/",
             "data": '{"name": "{{ alert_payload }}"}',
             "username": "Chris Vanstras",
-            "password": "qwerty",
-            "authorization_header": "auth_token",
+            "password": WEBHOOK_FIELD_PLACEHOLDER,
+            "authorization_header": WEBHOOK_FIELD_PLACEHOLDER,
             "forward_all": False,
             "headers": None,
             "http_method": "POST",
@@ -60,10 +61,12 @@ def test_get_list_webhooks(webhook_internal_api_setup, make_user_auth_headers):
                 "status_code": None,
                 "request_trigger": "",
                 "url": "",
+                "event_data": "",
             },
             "trigger_template": None,
-            "trigger_type": None,
-            "trigger_type_name": "",
+            "trigger_type": "0",
+            "trigger_type_name": "Escalation step",
+            "preset": None,
         }
     ]
 
@@ -85,8 +88,8 @@ def test_get_detail_webhook(webhook_internal_api_setup, make_user_auth_headers):
         "url": "https://github.com/",
         "data": '{"name": "{{ alert_payload }}"}',
         "username": "Chris Vanstras",
-        "password": "qwerty",
-        "authorization_header": "auth_token",
+        "password": WEBHOOK_FIELD_PLACEHOLDER,
+        "authorization_header": WEBHOOK_FIELD_PLACEHOLDER,
         "forward_all": False,
         "headers": None,
         "http_method": "POST",
@@ -101,10 +104,12 @@ def test_get_detail_webhook(webhook_internal_api_setup, make_user_auth_headers):
             "status_code": None,
             "request_trigger": "",
             "url": "",
+            "event_data": "",
         },
         "trigger_template": None,
-        "trigger_type": None,
-        "trigger_type_name": "",
+        "trigger_type": "0",
+        "trigger_type_name": "Escalation step",
+        "preset": None,
     }
 
     response = client.get(url, format="json", **make_user_auth_headers(user, token))
@@ -112,9 +117,8 @@ def test_get_detail_webhook(webhook_internal_api_setup, make_user_auth_headers):
     assert response.json() == expected_payload
 
 
-@mock.patch("apps.api.views.webhooks.WebhooksView.check_webhooks_2_enabled")
 @pytest.mark.django_db
-def test_create_webhook(mocked_check_webhooks_2_enabled, webhook_internal_api_setup, make_user_auth_headers):
+def test_create_webhook(webhook_internal_api_setup, make_user_auth_headers):
     user, token, webhook = webhook_internal_api_setup
     client = APIClient()
     url = reverse("api-internal:webhooks-list")
@@ -122,7 +126,8 @@ def test_create_webhook(mocked_check_webhooks_2_enabled, webhook_internal_api_se
     data = {
         "name": "the_webhook",
         "url": TEST_URL,
-        "trigger_type": str(Webhook.TRIGGER_ALERT_GROUP_CREATED),
+        "trigger_type": Webhook.TRIGGER_ALERT_GROUP_CREATED,
+        "http_method": "POST",
         "team": None,
     }
     response = client.post(url, data, format="json", **make_user_auth_headers(user, token))
@@ -147,9 +152,12 @@ def test_create_webhook(mocked_check_webhooks_2_enabled, webhook_internal_api_se
             "status_code": None,
             "request_trigger": "",
             "url": "",
+            "event_data": "",
         },
         "trigger_template": None,
+        "trigger_type": str(data["trigger_type"]),
         "trigger_type_name": "Alert Group Created",
+        "preset": None,
     }
     assert response.status_code == status.HTTP_201_CREATED
     assert response.json() == expected_response
@@ -157,7 +165,6 @@ def test_create_webhook(mocked_check_webhooks_2_enabled, webhook_internal_api_se
     assert webhook.user == user
 
 
-@mock.patch("apps.api.views.webhooks.WebhooksView.check_webhooks_2_enabled")
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     "field_name,value",
@@ -168,9 +175,7 @@ def test_create_webhook(mocked_check_webhooks_2_enabled, webhook_internal_api_se
         ("url", "https://myserver/{{ alert_payload.id }}/triggered"),
     ],
 )
-def test_create_valid_templated_field(
-    mocked_check_webhooks_2_enabled, webhook_internal_api_setup, make_user_auth_headers, field_name, value
-):
+def test_create_valid_templated_field(webhook_internal_api_setup, make_user_auth_headers, field_name, value):
     user, token, webhook = webhook_internal_api_setup
     client = APIClient()
     url = reverse("api-internal:webhooks-list")
@@ -179,7 +184,8 @@ def test_create_valid_templated_field(
         "name": "webhook_with_valid_data",
         "url": TEST_URL,
         field_name: value,
-        "trigger_type": str(Webhook.TRIGGER_ALERT_GROUP_CREATED),
+        "trigger_type": Webhook.TRIGGER_ALERT_GROUP_CREATED,
+        "http_method": "POST",
         "team": None,
     }
 
@@ -206,9 +212,12 @@ def test_create_valid_templated_field(
             "status_code": None,
             "request_trigger": "",
             "url": "",
+            "event_data": "",
         },
         "trigger_template": None,
+        "trigger_type": str(data["trigger_type"]),
         "trigger_type_name": "Alert Group Created",
+        "preset": None,
     }
     # update expected value for changed field
     expected_response[field_name] = value
@@ -216,7 +225,6 @@ def test_create_valid_templated_field(
     assert response.json() == expected_response
 
 
-@mock.patch("apps.api.views.webhooks.WebhooksView.check_webhooks_2_enabled")
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     "field_name,value",
@@ -227,9 +235,7 @@ def test_create_valid_templated_field(
         ("url", "invalid-url/{{}}/triggered"),
     ],
 )
-def test_create_invalid_templated_field(
-    mocked_check_webhooks_2_enabled, webhook_internal_api_setup, make_user_auth_headers, field_name, value
-):
+def test_create_invalid_templated_field(webhook_internal_api_setup, make_user_auth_headers, field_name, value):
     user, token, webhook = webhook_internal_api_setup
     client = APIClient()
     url = reverse("api-internal:webhooks-list")
@@ -238,7 +244,8 @@ def test_create_invalid_templated_field(
         "name": "webhook_with_valid_data",
         "url": TEST_URL,
         field_name: value,
-        "trigger_type": str(Webhook.TRIGGER_ALERT_GROUP_CREATED),
+        "trigger_type": Webhook.TRIGGER_ALERT_GROUP_CREATED,
+        "http_method": "POST",
         "team": None,
     }
 
@@ -246,9 +253,8 @@ def test_create_invalid_templated_field(
     assert response.status_code == status.HTTP_400_BAD_REQUEST
 
 
-@mock.patch("apps.api.views.webhooks.WebhooksView.check_webhooks_2_enabled")
 @pytest.mark.django_db
-def test_update_webhook(mocked_check_webhooks_2_enabled, webhook_internal_api_setup, make_user_auth_headers):
+def test_update_webhook(webhook_internal_api_setup, make_user_auth_headers):
     user, token, webhook = webhook_internal_api_setup
     client = APIClient()
     url = reverse("api-internal:webhooks-detail", kwargs={"pk": webhook.public_primary_key})
@@ -256,7 +262,8 @@ def test_update_webhook(mocked_check_webhooks_2_enabled, webhook_internal_api_se
     data = {
         "name": "github_button_updated",
         "url": "https://github.com/",
-        "trigger_type": str(Webhook.TRIGGER_ALERT_GROUP_CREATED),
+        "trigger_type": Webhook.TRIGGER_ALERT_GROUP_CREATED,
+        "http_method": "POST",
         "team": None,
     }
     response = client.put(
@@ -267,9 +274,8 @@ def test_update_webhook(mocked_check_webhooks_2_enabled, webhook_internal_api_se
     assert updated_instance.name == "github_button_updated"
 
 
-@mock.patch("apps.api.views.webhooks.WebhooksView.check_webhooks_2_enabled")
 @pytest.mark.django_db
-def test_delete_webhook(mocked_check_webhooks_2_enabled, webhook_internal_api_setup, make_user_auth_headers):
+def test_delete_webhook(webhook_internal_api_setup, make_user_auth_headers):
     user, token, webhook = webhook_internal_api_setup
     client = APIClient()
     url = reverse("api-internal:webhooks-detail", kwargs={"pk": webhook.public_primary_key})
@@ -285,6 +291,7 @@ def test_delete_webhook(mocked_check_webhooks_2_enabled, webhook_internal_api_se
         (LegacyAccessControlRole.ADMIN, status.HTTP_200_OK),
         (LegacyAccessControlRole.EDITOR, status.HTTP_403_FORBIDDEN),
         (LegacyAccessControlRole.VIEWER, status.HTTP_403_FORBIDDEN),
+        (LegacyAccessControlRole.NONE, status.HTTP_403_FORBIDDEN),
     ],
 )
 def test_webhook_create_permissions(
@@ -316,6 +323,7 @@ def test_webhook_create_permissions(
         (LegacyAccessControlRole.ADMIN, status.HTTP_200_OK),
         (LegacyAccessControlRole.EDITOR, status.HTTP_403_FORBIDDEN),
         (LegacyAccessControlRole.VIEWER, status.HTTP_403_FORBIDDEN),
+        (LegacyAccessControlRole.NONE, status.HTTP_403_FORBIDDEN),
     ],
 )
 def test_webhook_update_permissions(
@@ -353,6 +361,7 @@ def test_webhook_update_permissions(
         (LegacyAccessControlRole.ADMIN, status.HTTP_200_OK),
         (LegacyAccessControlRole.EDITOR, status.HTTP_200_OK),
         (LegacyAccessControlRole.VIEWER, status.HTTP_200_OK),
+        (LegacyAccessControlRole.NONE, status.HTTP_403_FORBIDDEN),
     ],
 )
 def test_webhook_list_permissions(
@@ -386,6 +395,7 @@ def test_webhook_list_permissions(
         (LegacyAccessControlRole.ADMIN, status.HTTP_200_OK),
         (LegacyAccessControlRole.EDITOR, status.HTTP_200_OK),
         (LegacyAccessControlRole.VIEWER, status.HTTP_200_OK),
+        (LegacyAccessControlRole.NONE, status.HTTP_403_FORBIDDEN),
     ],
 )
 def test_webhook_retrieve_permissions(
@@ -419,6 +429,7 @@ def test_webhook_retrieve_permissions(
         (LegacyAccessControlRole.ADMIN, status.HTTP_204_NO_CONTENT),
         (LegacyAccessControlRole.EDITOR, status.HTTP_403_FORBIDDEN),
         (LegacyAccessControlRole.VIEWER, status.HTTP_403_FORBIDDEN),
+        (LegacyAccessControlRole.NONE, status.HTTP_403_FORBIDDEN),
     ],
 )
 def test_webhook_delete_permissions(
@@ -484,3 +495,219 @@ def test_webhook_from_other_team_without_flag(
 
     response = client.get(url, format="json", **make_user_auth_headers(user, token))
     assert response.status_code == status.HTTP_200_OK
+
+
+@pytest.mark.django_db
+def test_get_webhook_responses(
+    make_organization_and_user_with_plugin_token,
+    make_team,
+    make_user_auth_headers,
+    make_custom_webhook,
+    make_webhook_response,
+):
+    organization, user, token = make_organization_and_user_with_plugin_token()
+    team = make_team(organization)
+    webhook = make_custom_webhook(
+        organization=organization, team=team, trigger_type=Webhook.TRIGGER_ALERT_GROUP_CREATED
+    )
+    for i in range(0, RECENT_RESPONSE_LIMIT + 1):
+        make_webhook_response(
+            webhook=webhook,
+            trigger_type=webhook.trigger_type,
+            status_code=200,
+            content=json.dumps({"id": "third-party-id"}),
+            event_data=json.dumps({"test": f"{i}"}),
+        )
+
+    client = APIClient()
+    url = reverse("api-internal:webhooks-responses", kwargs={"pk": webhook.public_primary_key})
+    response = client.get(url, format="json", **make_user_auth_headers(user, token))
+    assert response.status_code == status.HTTP_200_OK
+    assert len(response.data) == RECENT_RESPONSE_LIMIT
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "test_template, test_payload, expected_result",
+    [
+        ("https://test.com", None, "https://test.com"),
+        ("https://test.com", "", "https://test.com"),
+        ("{{ name }}", {"name": "test_1"}, "test_1"),
+        ("{{ name }}", '{"name": "test_1"}', "test_1"),
+    ],
+)
+def test_webhook_preview_template(
+    webhook_internal_api_setup, make_user_auth_headers, test_template, test_payload, expected_result
+):
+    user, token, webhook = webhook_internal_api_setup
+    client = APIClient()
+    url = reverse("api-internal:webhooks-preview-template", kwargs={"pk": webhook.public_primary_key})
+    data = {
+        "template_name": WEBHOOK_URL,
+        "template_body": test_template,
+        "payload": test_payload,
+    }
+
+    response = client.post(url, data, format="json", **make_user_auth_headers(user, token))
+    assert response.status_code == status.HTTP_200_OK
+    assert response.data["preview"] == expected_result
+
+
+@pytest.mark.django_db
+def test_webhook_field_masking(webhook_internal_api_setup, make_user_auth_headers):
+    user, token, webhook = webhook_internal_api_setup
+    client = APIClient()
+    url = reverse("api-internal:webhooks-list")
+
+    data = {
+        "name": "the_webhook",
+        "url": TEST_URL,
+        "trigger_type": Webhook.TRIGGER_ALERT_GROUP_CREATED,
+        "http_method": "POST",
+        "team": None,
+        "password": "secret_password",
+        "authorization_header": "auth 1234",
+    }
+
+    response = client.post(url, data, format="json", **make_user_auth_headers(user, token))
+    webhook = Webhook.objects.get(public_primary_key=response.data["id"])
+
+    expected_response = data | {
+        "id": webhook.public_primary_key,
+        "data": None,
+        "username": None,
+        "password": WEBHOOK_FIELD_PLACEHOLDER,
+        "authorization_header": WEBHOOK_FIELD_PLACEHOLDER,
+        "forward_all": True,
+        "headers": None,
+        "http_method": "POST",
+        "integration_filter": None,
+        "is_webhook_enabled": True,
+        "is_legacy": False,
+        "last_response_log": {
+            "request_data": "",
+            "request_headers": "",
+            "timestamp": None,
+            "content": "",
+            "status_code": None,
+            "request_trigger": "",
+            "url": "",
+            "event_data": "",
+        },
+        "trigger_template": None,
+        "trigger_type": str(data["trigger_type"]),
+        "trigger_type_name": "Alert Group Created",
+        "preset": None,
+    }
+
+    assert response.status_code == status.HTTP_201_CREATED
+    assert response.json() == expected_response
+    assert webhook.password == data["password"]
+    assert webhook.authorization_header == data["authorization_header"]
+    assert webhook.user == user
+
+
+@pytest.mark.django_db
+def test_webhook_copy(webhook_internal_api_setup, make_user_auth_headers):
+    user, token, webhook = webhook_internal_api_setup
+    client = APIClient()
+    url = reverse("api-internal:webhooks-list")
+
+    data = {
+        "name": "the_webhook",
+        "url": TEST_URL,
+        "trigger_type": Webhook.TRIGGER_ALERT_GROUP_CREATED,
+        "http_method": "POST",
+        "team": None,
+        "password": "secret_password",
+        "authorization_header": "auth 1234",
+    }
+    response1 = client.post(url, data, format="json", **make_user_auth_headers(user, token))
+    get_url = reverse("api-internal:webhooks-detail", kwargs={"pk": response1.data["id"]})
+    response2 = client.get(get_url, format="json", **make_user_auth_headers(user, token))
+    to_copy = response2.json()
+    to_copy["name"] = "copied_webhook"
+    response3 = client.post(url, to_copy, format="json", **make_user_auth_headers(user, token))
+    webhook = Webhook.objects.get(public_primary_key=response3.data["id"])
+
+    expected_response = data | {
+        "id": webhook.public_primary_key,
+        "name": to_copy["name"],
+        "data": None,
+        "username": None,
+        "password": WEBHOOK_FIELD_PLACEHOLDER,
+        "authorization_header": WEBHOOK_FIELD_PLACEHOLDER,
+        "forward_all": True,
+        "headers": None,
+        "http_method": "POST",
+        "integration_filter": None,
+        "is_webhook_enabled": True,
+        "is_legacy": False,
+        "last_response_log": {
+            "request_data": "",
+            "request_headers": "",
+            "timestamp": None,
+            "content": "",
+            "status_code": None,
+            "request_trigger": "",
+            "url": "",
+            "event_data": "",
+        },
+        "trigger_template": None,
+        "trigger_type": str(data["trigger_type"]),
+        "trigger_type_name": "Alert Group Created",
+        "preset": None,
+    }
+
+    assert response3.status_code == status.HTTP_201_CREATED
+    assert response3.json() == expected_response
+    assert webhook.password == data["password"]
+    assert webhook.authorization_header == data["authorization_header"]
+    assert webhook.id != to_copy["id"]
+    assert webhook.user == user
+
+
+@pytest.mark.django_db
+def test_create_invalid_missing_fields(webhook_internal_api_setup, make_user_auth_headers):
+    user, token, webhook = webhook_internal_api_setup
+    client = APIClient()
+    url = reverse("api-internal:webhooks-list")
+
+    data = {"url": TEST_URL, "trigger_type": Webhook.TRIGGER_ALERT_GROUP_CREATED, "http_method": "POST"}
+    response = client.post(url, data, format="json", **make_user_auth_headers(user, token))
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["name"][0] == "This field is required."
+
+    data = {"name": "test webhook 1", "trigger_type": Webhook.TRIGGER_ALERT_GROUP_CREATED, "http_method": "POST"}
+    response = client.post(url, data, format="json", **make_user_auth_headers(user, token))
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["url"][0] == "This field is required."
+
+    data = {"name": "test webhook 2", "url": TEST_URL, "http_method": "POST"}
+    response = client.post(url, data, format="json", **make_user_auth_headers(user, token))
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["trigger_type"][0] == "This field is required."
+
+    data = {
+        "name": "test webhook 3",
+        "url": TEST_URL,
+        "trigger_type": Webhook.TRIGGER_ALERT_GROUP_CREATED,
+    }
+    response = client.post(url, data, format="json", **make_user_auth_headers(user, token))
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["http_method"][0] == "This field must be one of ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']."
+
+    data = {
+        "name": "test webhook 3",
+        "url": TEST_URL,
+        "trigger_type": Webhook.TRIGGER_ALERT_GROUP_CREATED,
+        "http_method": "TOAST",
+    }
+    response = client.post(url, data, format="json", **make_user_auth_headers(user, token))
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["http_method"][0] == "This field must be one of ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']."
+
+    data = {"name": "test webhook 3", "url": TEST_URL, "trigger_type": 2000000, "http_method": "POST"}
+    response = client.post(url, data, format="json", **make_user_auth_headers(user, token))
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["trigger_type"][0] == "This field is required."

@@ -5,10 +5,8 @@ import cn from 'classnames/bind';
 import { observer } from 'mobx-react';
 
 import gitHubStarSVG from 'assets/img/github_star.svg';
-import Tag from 'components/Tag/Tag';
+import logo from 'assets/img/logo.svg';
 import Alerts from 'containers/Alerts/Alerts';
-import IRMBanner from 'containers/IRMBanner/IRMBanner';
-import logo from 'img/logo.svg';
 import { isTopNavbar } from 'plugin/GrafanaPluginRootPage.helpers';
 import { useStore } from 'state/useStore';
 import { APP_SUBTITLE } from 'utils/consts';
@@ -58,13 +56,10 @@ const Header = observer(() => {
       );
     }
 
-    const { irmPlan } = store.alertGroupStore;
-
     return (
       <>
         <HorizontalGroup>
           <h1 className={cx('page-header__title')}>Grafana OnCall</h1>
-          {irmPlan?.limits && <Tag className={cx('irm-icon')}>{irmPlan.limits.isIrmPro ? 'IRM Pro' : 'IRM Lite'}</Tag>}
         </HorizontalGroup>
         <div className={cx('page-header__sub-title')}>{APP_SUBTITLE}</div>
       </>
@@ -76,7 +71,6 @@ const Banners: React.FC = () => {
   return (
     <div className={cx('banners')}>
       <Alerts />
-      <IRMBanner />
     </div>
   );
 };
